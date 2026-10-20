@@ -35,5 +35,6 @@ files api/openapi.yaml '*.md' | xargs sed -i -e "s#\bapp_\(at_\|rt_\|ac_\|iv_\|s
 # The generated code embeds the spec and imports the module, so regenerate
 # rather than edit it.
 make generate
+gofmt -w internal/auth
 go build ./...
 echo "Renamed to $NAME ($MODULE). Review with: git diff"
