@@ -10,6 +10,8 @@ dev: migrate ## Migrate, then run the server on :8080 (needs DATABASE_URL)
 	go run ./cmd/server serve
 
 generate: ## Regenerate internal/db/gen (sqlc) and internal/api/gen (oapi-codegen) after any SQL, migration or spec change
+	# sqlc does not remove output for a deleted query file, so start clean.
+	rm -f internal/db/gen/*.go
 	$(SQLC) generate
 	$(OAPI) --config oapi-codegen.yaml api/openapi.yaml
 
