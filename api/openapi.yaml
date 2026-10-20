@@ -1,0 +1,234 @@
+openapi: 3.0.3
+info:
+  title: App Template API
+  description: |
+    The JSON API. This spec is the HTTP surface's source of truth:
+    `make generate` turns it into internal/api/gen.
+
+    Every operation needs a credential unless it says `security: []`: an
+    `app_` api key or `app_at_` access token as `Authorization: Bearer ...`,
+    or the web session cookie. A missing or unknown credential gets a 401
+    whose WWW-Authenticate header points at OAuth discovery, which is how an
+    MCP client such as claude.ai starts the connector flow.
+  version: 0.1.0
+
+servers:
+  - url: /api
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: The api key this request acts as
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /notes:
+    get:
+      operationId: listNotes
+      summary: List notes, newest first
+      security: []
+      responses:
+        "200":
+          description: The notes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteList"
+    post:
+      operationId: createNote
+      summary: Create a note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteCreate"
+      responses:
+        "201":
+          description: The created note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+
+  /notes/{noteId}:
+    parameters:
+      - $ref: "#/components/parameters/NoteId"
+    get:
+      operationId: getNote
+      summary: One note
+      security: []
+      responses:
+        "200":
+          description: The note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateNote
+      summary: Change a note's title, body, or both
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteUpdate"
+      responses:
+        "200":
+          description: The updated note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+    delete:
+      operationId: deleteNote
+      summary: Delete a note
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: An app_ api key, or an app_at_ OAuth access token.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: app_session
+      description: The web session set by /login.
+
+  parameters:
+    NoteId:
+      name: noteId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: No credential, or one that is unknown, expired or revoked
+      content:
+        text/plain:
+          schema:
+            type: string
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unprocessable:
+      description: The request parsed but a field is out of bounds
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    Me:
+      type: object
+      required: [keyId, name]
+      properties:
+        keyId:
+          type: string
+        name:
+          type: string
+          description: The label the key was minted with.
+
+    Note:
+      type: object
+      required: [id, title, body, createdAt, updatedAt, url]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        url:
+          type: string
+          description: The note's web page.
+
+    NoteList:
+      type: object
+      required: [notes]
+      properties:
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Note"
+
+    NoteCreate:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+
+    NoteUpdate:
+      type: object
+      description: Fields left out are left alone.
+      properties:
+        title:
+          type: string
+          x-go-type-skip-optional-pointer: false
+        body:
+          type: string
+          x-go-type-skip-optional-pointer: false

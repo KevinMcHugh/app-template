@@ -1,0 +1,13 @@
+bin/
+*.exe
+*.out
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+.idea/
+.vscode/
+
+.sprite

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}{{.AppName}}{{end}}</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f7f8fa; --panel: #ffffff; --fg: #14171c; --muted: #5b6370; --line: #dde1e7;
+  --accent: #2f5bd3; --accent-fg: #ffffff; --ok: #2f6b3a; --err: #b00020;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1115; --panel: #171a20; --fg: #e8eaee; --muted: #9aa3b0; --line: #2a2f38;
+          --accent: #7ea2ff; --accent-fg: #0f1115; --ok: #8fd19e; --err: #ff9aa8; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+header.top { display: flex; align-items: center; gap: 1.25rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header.top .brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+header.top nav { display: flex; gap: 1rem; flex: 1; }
+main { max-width: 56rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+a { color: var(--accent); }
+h1 { font-size: 1.6rem; margin: .2rem 0; }
+h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
+.muted { color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; margin: 1rem 0; }
+.list { display: grid; gap: .75rem; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .85rem; display: flex; flex-direction: column; gap: .3rem; }
+.card h3 { margin: 0; font-size: 1.05rem; }
+.card h3 a { color: var(--fg); text-decoration: none; }
+.body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.excerpt { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+button, .btn { font: inherit; padding: .45rem .9rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); cursor: pointer; text-decoration: none; display: inline-block; }
+button.ghost, .btn.ghost { background: transparent; color: var(--accent); }
+button.danger { background: transparent; color: var(--err); border-color: var(--err); }
+input, textarea { font: inherit; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--fg); width: 100%; }
+textarea { min-height: 8rem; }
+form.stack { display: grid; gap: .6rem; }
+form.inline { display: inline; }
+.row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.flash { padding: .6rem .8rem; border-radius: 6px; border: 1px solid var(--ok); color: var(--ok); }
+.flash.err { border-color: var(--err); color: var(--err); }
+/* An id the MCP tools take. The pages run no script, so there is no copy
+   button: user-select: all makes one click select the whole id. */
+code.id { font-family: ui-monospace, Menlo, monospace; font-size: .8rem; padding: .05rem .35rem; border: 1px dashed var(--line); border-radius: 4px; user-select: all; -webkit-user-select: all; cursor: text; word-break: break-all; }
+details summary { cursor: pointer; color: var(--accent); }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">{{.AppName}}</a>
+  <nav><a href="/">Notes</a></nav>
+  {{block "account" .}}{{if .SignedIn}}<form class="inline" method="POST" action="/logout"><button class="ghost" type="submit">Sign out</button></form>{{else}}<a class="btn ghost" href="/login?next={{.Path}}">Sign in</a>{{end}}{{end}}
+</header>
+<main>
+{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+{{if .Error}}<p class="flash err">{{.Error}}</p>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>

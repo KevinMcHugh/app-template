@@ -1,0 +1,15 @@
+{{define "title"}}Sign in · {{.AppName}}{{end}}
+{{/* An override must have content: Go templates treat a whitespace-only
+     define as empty and keep the layout's block. */}}
+{{define "account"}}<span class="muted">Not signed in</span>{{end}}
+{{define "content"}}
+<div class="panel" style="max-width:30rem;margin:3rem auto">
+  <h1>Sign in</h1>
+  <p class="muted">Paste an api key. Mint one on the server with <code>server keys create --name you</code>.</p>
+  <form method="POST" action="/login" class="row" style="margin-top:1rem">
+    <input type="password" name="api_key" autocomplete="off" autofocus aria-label="API key" style="flex:1">
+    <input type="hidden" name="next" value="{{.Next}}">
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+{{end}}

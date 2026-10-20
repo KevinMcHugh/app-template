@@ -1,0 +1,89 @@
+# Test on every push and pull request; after a push to main, redeploy to the
+# sprites.dev sprite by running deploy/redeploy.sh there. See docs/deploy.md.
+#
+# Deploying is off until it is set up, so a fresh copy of the template stays
+# green. To turn it on (Settings -> Secrets and variables -> Actions):
+#   - variable SPRITE_NAME: the sprite's name, which is also the name of its
+#     service and of the checkout in its home directory
+#   - secret SPRITES_TOKEN: a token from https://sprites.dev/account for the
+#     org that owns the sprite
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
+    env:
+      # A scratch database the end-to-end tests may wipe.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/app_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generated code is up to date
+        run: make check
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -o "$RUNNER_TEMP/server" ./cmd/server
+
+      - name: Test
+        run: go test -count=1 ./...
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SPRITE_NAME != ''
+    runs-on: ubuntu-latest
+    # Deploys run one at a time and never cancel each other: a deploy killed
+    # halfway (after migrating, before restarting) is worse than a queued one.
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    steps:
+      - name: Install the sprite CLI
+        run: |
+          curl -fsSL https://sprites.dev/install.sh | bash
+          # The installer puts the binary in one of these; take whichever it used.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.sprites/bin" >> "$GITHUB_PATH"
+
+      - name: Sign in
+        env:
+          SPRITES_TOKEN: ${{ secrets.SPRITES_TOKEN }}
+        run: |
+          if [ -z "$SPRITES_TOKEN" ]; then
+            echo "::error::SPRITES_TOKEN is not set; see the comment at the top of this workflow"
+            exit 1
+          fi
+          sprite auth setup --token "$SPRITES_TOKEN"
+
+      # Pull before running the script, so a change to it applies in the
+      # same deploy even on a checkout that predates it.
+      - name: Redeploy
+        env:
+          APP: ${{ vars.SPRITE_NAME }}
+        run: |
+          sprite exec -s "$APP" -- bash -lc \
+            "git -C ~/$APP pull -q --ff-only origin main && ~/$APP/deploy/redeploy.sh"

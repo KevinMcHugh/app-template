@@ -1,0 +1,14 @@
+# oapi-codegen config for api/openapi.yaml. Run `make generate`.
+package: apigen
+output: internal/api/gen/server.gen.go
+generate:
+  chi-server: true
+  models: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  # Optional fields stay plain values with omitempty, so view models convert
+  # to API types without a pointer per field. Opt a field back into a pointer
+  # with `x-go-type-skip-optional-pointer: false` when its zero value is a
+  # real value that must differ from "not sent".
+  prefer-skip-optional-pointer: true

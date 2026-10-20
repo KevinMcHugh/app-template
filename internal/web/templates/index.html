@@ -1,0 +1,30 @@
+{{define "title"}}Notes · {{.AppName}}{{end}}
+{{define "content"}}
+<h1>Notes</h1>
+<p class="muted">{{len .Notes}} note{{if ne (len .Notes) 1}}s{{end}}.</p>
+{{if .SignedIn}}
+<details class="panel"{{if not .Notes}} open{{end}}>
+  <summary>New note</summary>
+  <form method="POST" action="/notes" class="stack" style="margin-top:.75rem">
+    <input name="title" placeholder="Title" aria-label="Title" required maxlength="200">
+    <textarea name="body" placeholder="Body" aria-label="Body"></textarea>
+    <div><button type="submit">Save</button></div>
+  </form>
+</details>
+{{end}}
+{{if not .Notes}}
+<div class="panel"><p>No notes yet.{{if not .SignedIn}} <a href="/login?next=/">Sign in</a> to add one, or ask Claude over MCP.{{end}}</p></div>
+{{end}}
+<div class="list">
+{{range .Notes}}
+  <article class="card">
+    <h3><a href="/notes/{{.ID}}">{{.Title}}</a></h3>
+    {{if .Body}}<div class="excerpt">{{.Body}}</div>{{end}}
+    <div class="row muted" style="font-size:.8rem">
+      <span>{{.UpdatedAt.Format "2006-01-02 15:04"}}</span>
+      <code class="id" title="Click to select. This is the id the MCP tools take.">{{.ID}}</code>
+    </div>
+  </article>
+{{end}}
+</div>
+{{end}}

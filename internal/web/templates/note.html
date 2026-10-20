@@ -1,0 +1,23 @@
+{{define "title"}}{{.Note.Title}} · {{.AppName}}{{end}}
+{{define "content"}}
+<p><a href="/">← All notes</a></p>
+<h1>{{.Note.Title}}</h1>
+<p class="muted row" style="font-size:.85rem">
+  <span>Updated {{.Note.UpdatedAt.Format "2006-01-02 15:04"}}</span>
+  <code class="id" title="Click to select. This is the id the MCP tools take.">{{.Note.ID}}</code>
+</p>
+<div class="panel body">{{if .Note.Body}}{{.Note.Body}}{{else}}<span class="muted">No body.</span>{{end}}</div>
+{{if .SignedIn}}
+<details class="panel">
+  <summary>Edit</summary>
+  <form method="POST" action="/notes/{{.Note.ID}}" class="stack" style="margin-top:.75rem">
+    <input name="title" value="{{.Note.Title}}" aria-label="Title" required maxlength="200">
+    <textarea name="body" aria-label="Body">{{.Note.Body}}</textarea>
+    <div><button type="submit">Save</button></div>
+  </form>
+</details>
+<form method="POST" action="/notes/{{.Note.ID}}/delete" class="inline">
+  <button class="danger" type="submit">Delete</button>
+</form>
+{{end}}
+{{end}}
