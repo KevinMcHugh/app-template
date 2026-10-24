@@ -2,8 +2,14 @@
 # their dependency trees stay out of go.mod.
 .PHONY: dev generate migrate rollback new-migration key invite build test check help
 
-SQLC   = go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
-OAPI   = go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
+# Generators run on the toolchain go.mod names, never whichever one go run
+# picks: oapi-codegen embeds the spec gzipped, and gzip output differs
+# between Go versions, so a different toolchain fails `make check` in CI.
+GO_VERSION := $(shell sed -n 's/^go //p' go.mod)
+GOTOOL     = GOTOOLCHAIN=go$(GO_VERSION)
+
+SQLC   = $(GOTOOL) go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+OAPI   = $(GOTOOL) go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 DBMATE = go run github.com/amacneil/dbmate/v2@v2.28.0 --migrations-dir db/migrations --no-dump-schema
 
 dev: migrate ## Migrate, then run the server on :8080 (needs DATABASE_URL)
