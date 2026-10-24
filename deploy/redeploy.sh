@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Redeploy the app on its sprite: pull main, migrate, rebuild, restart, and
+# Redeploy the app on its sprite: pull its branch, migrate, rebuild, restart, and
 # check /health. Run it on the sprite (docs/deploy.md):
 #
 #   sprite exec -s <app> -- bash -lc '~/<repo>/deploy/redeploy.sh'
@@ -17,19 +17,24 @@ SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 REPO="${REPO:-$(dirname "$(dirname "$SELF")")}"
 APP="${APP:-$(basename "$REPO")}"
 DB_NAME="${DB_NAME:-$APP}"
+# The branch the checkout is on, so a sprite deployed from a branch keeps
+# following it; CI deploys main.
+BRANCH="${BRANCH:-$(git -C "$REPO" rev-parse --abbrev-ref HEAD)}"
 SPRITE_ENV="${SPRITE_ENV:-/.sprite/bin/sprite-env}"
+# Only dbmate below reads this; the running app gets its own from the
+# service's --env (docs/configuration.md).
 export DATABASE_URL="${DATABASE_URL:-postgres:///$DB_NAME?host=/var/run/postgresql&sslmode=disable}"
 
 # Pull first, then run the pulled copy of this script, so a change to the
 # deploy steps takes effect in the same deploy. --ff-only refuses to deploy
 # over local edits on the sprite instead of discarding them.
 if [ -z "${REDEPLOY_PULLED:-}" ]; then
-  git -C "$REPO" fetch -q origin main
-  git -C "$REPO" merge -q --ff-only origin/main
+  git -C "$REPO" fetch -q origin "$BRANCH"
+  git -C "$REPO" merge -q --ff-only "origin/$BRANCH"
   REDEPLOY_PULLED=1 exec bash "$REPO/deploy/redeploy.sh" "$@"
 fi
 cd "$REPO"
-echo "deploying $APP at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+echo "deploying $APP ($BRANCH) at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
 
 # A checkpoint to restore if this deploy goes wrong (sprite-env checkpoints
 # list, then sprite-env checkpoints restore <id>, which restarts the sprite).

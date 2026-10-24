@@ -13,7 +13,7 @@ The example resource is **notes** (a title and a body). It shows every layer: mi
 - **Auth that claude.ai can use:** api keys for scripts and Claude Code; OAuth 2.1 (dynamic client registration and PKCE) for claude.ai custom connectors; single-use invites for newcomers; cookie sessions for the pages. The spec decides who may call what: an operation with `security: []` is public, and everything else is private.
 - **Server-rendered pages with no script.** html/template behind a strict CSP. There is no npm step, so the binary is the whole deploy.
 - **Tests** that pin which operations are public without needing a database, plus end-to-end tests of the API, OAuth, invites, the pages and a real MCP client session against Postgres.
-- **Deploy:** sprite setup steps, a redeploy script (checkpoint, migrate, build, swap the binary, health check, roll back) and a CI workflow that runs it.
+- **Deploy:** sprite setup steps, a redeploy script (checkpoint, migrate, build, swap the binary, health check, roll back) and a CI workflow that runs it. Config and secrets go on the sprite service's environment, never in env files ([docs/configuration.md](docs/configuration.md)).
 
 ## Start a new app from it
 
@@ -83,5 +83,6 @@ tools/rename.sh         make a copy your own
 - [Architecture](docs/architecture.md): the layers, the request flow, and why it is built this way
 - [Adding a resource](docs/adding-a-resource.md): the end-to-end recipe
 - [Auth](docs/auth.md): keys, OAuth, invites, sessions, and public versus private
-- [Deploy](docs/deploy.md): the sprites.dev recipe and CI redeploys
+- [Deploy](docs/deploy.md): the sprites.dev recipe (by CLI or through the Fly.io MCP connector) and CI redeploys
+- [Configuration](docs/configuration.md): config and secrets live on the sprite service's environment, never in env files
 - [CLAUDE.md](CLAUDE.md): orientation for Claude Code sessions

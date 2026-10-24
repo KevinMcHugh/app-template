@@ -24,14 +24,17 @@ sprite exec -- bash -lc "sudo install -m 0755 ~/$APP/deploy/run-postgres.sh /usr
 sprite exec -- bash -lc '/.sprite/bin/sprite-env services create postgres --cmd /usr/local/bin/run-postgres.sh --no-stream'
 sprite exec -- bash -lc "sudo -u postgres createuser -s sprite; sudo -u postgres createdb -O sprite $APP"
 
+# Config goes on the service (--env) and nowhere else: no env files, no
+# exports in ~/.profile. See docs/configuration.md. One-off commands get
+# DATABASE_URL inline.
 DSN="postgres:///$APP?host=/var/run/postgresql&sslmode=disable"
-sprite exec -- bash -lc "echo 'export DATABASE_URL=\"$DSN\"' >> ~/.profile"
-sprite exec -- bash -lc "cd ~/$APP && dbmate --migrations-dir db/migrations --no-dump-schema up && go build -o bin/server ./cmd/server"
-sprite exec -- bash -lc "~/$APP/bin/server keys create --name you"   # SAVE THE KEY
+sprite exec -- bash -lc "cd ~/$APP && DATABASE_URL='$DSN' dbmate --migrations-dir db/migrations --no-dump-schema up && go build -o bin/server ./cmd/server"
+sprite exec -- bash -lc "DATABASE_URL='$DSN' ~/$APP/bin/server keys create --name you"   # SAVE THE KEY
 
 # PUBLIC_URL must be the https URL, because OAuth discovery advertises it.
+# Add any secrets the app needs to the same --env list.
 sprite exec -- bash -lc "/.sprite/bin/sprite-env services create $APP \
-  --cmd /home/sprite/$APP/bin/server --dir /home/sprite/$APP \
+  --cmd /home/sprite/$APP/bin/server --args serve --dir /home/sprite/$APP \
   --needs postgres --http-port 8080 \
   --env 'DATABASE_URL=$DSN,PORT=8080,PUBLIC_URL=https://$APP-<org>.sprites.app' \
   --no-stream"
@@ -40,7 +43,17 @@ sprite config update -s $APP --url-auth public
 
 The sprite needs the Go version in `go.mod`. `go build` fetches that toolchain itself if the installed Go is older.
 
-For someone else, mint an invite they paste when connecting Claude: `sprite exec -s myapp -- bash -lc '~/myapp/bin/server invites create --note ana --expires-in 168h'`.
+For someone else, mint an invite they paste when connecting Claude: `sprite exec -s myapp -- bash -lc "DATABASE_URL='postgres:///myapp?host=/var/run/postgresql&sslmode=disable' ~/myapp/bin/server invites create --note ana --expires-in 168h"`.
+
+**Config and secrets** live only in the service's `--env`. Changing one means recreating the service with every variable; [configuration.md](configuration.md) has the command and the reasons.
+
+## Deploying through the Fly.io MCP connector
+
+Claude can do the first deploy itself with the Fly.io connector (`create_sprite`, `exec`, `service_create`, `checkpoint_create`), as it did for mr-ebay. Three things differ from the CLI recipe:
+
+- **Names.** The connector can only create and reach sprites whose names start with its grant's prefix (for example `mcp-`), so name the sprite, the checkout, the service and the database all `mcp-myapp`. `redeploy.sh` derives them from the checkout's directory name, so nothing else changes.
+- **Service environment.** The connector's `service_create` has no environment option. Create the app's service with `sprite-env services create … --env …` through the connector's `exec`, exactly as in the recipe above. Do not route around the gap with an env file and a launcher script: mr-ebay's first deploy did, and it was taken out ([configuration.md](configuration.md)).
+- **URL auth.** A new sprite's URL is private, and the connector cannot change that. Someone with the CLI runs `sprite config update -s mcp-myapp --url-auth public` once, before claude.ai can connect.
 
 ## Redeploys
 
@@ -53,7 +66,7 @@ Until `SPRITE_NAME` is set, the deploy job is skipped and only the tests run. To
 
 `deploy/redeploy.sh`:
 
-1. fast-forwards the checkout to `origin/main` and re-runs the pulled copy of itself, so a change to the deploy steps applies in the same deploy;
+1. fast-forwards the checkout to its branch on `origin` (whatever it has checked out, `main` under CI; set `BRANCH` to override) and re-runs the pulled copy of itself, so a change to the deploy steps applies in the same deploy;
 2. takes a sprite checkpoint named for the commit (`sprite-env checkpoints list`, then `sprite-env checkpoints restore <id>` to go back);
 3. reinstalls `run-postgres.sh` and restarts postgres, but only if that file changed;
 4. waits for postgres, then runs `dbmate up`;
