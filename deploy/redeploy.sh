@@ -17,8 +17,9 @@ SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 REPO="${REPO:-$(dirname "$(dirname "$SELF")")}"
 APP="${APP:-$(basename "$REPO")}"
 DB_NAME="${DB_NAME:-$APP}"
-# The branch the checkout is on, so a sprite deployed from a branch keeps
-# following it; CI deploys main.
+# The branch to deploy: whatever the checkout is on, so a sprite deployed
+# from a branch keeps following it. CI sets BRANCH=main, which also moves a
+# checkout that was on another branch over to main.
 BRANCH="${BRANCH:-$(git -C "$REPO" rev-parse --abbrev-ref HEAD)}"
 SPRITE_ENV="${SPRITE_ENV:-/.sprite/bin/sprite-env}"
 # Only dbmate below reads this; the running app gets its own from the
@@ -30,8 +31,13 @@ export DATABASE_URL="${DATABASE_URL:-postgres:///$DB_NAME?host=/var/run/postgres
 # over local edits on the sprite instead of discarding them.
 if [ -z "${REDEPLOY_PULLED:-}" ]; then
   git -C "$REPO" fetch -q origin "$BRANCH"
+  if [ "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" != "$BRANCH" ]; then
+    # Creates a local branch tracking origin's on first use. Like the merge,
+    # it refuses to run over local edits.
+    git -C "$REPO" checkout -q "$BRANCH"
+  fi
   git -C "$REPO" merge -q --ff-only "origin/$BRANCH"
-  REDEPLOY_PULLED=1 exec bash "$REPO/deploy/redeploy.sh" "$@"
+  REDEPLOY_PULLED=1 BRANCH="$BRANCH" exec bash "$REPO/deploy/redeploy.sh" "$@"
 fi
 cd "$REPO"
 echo "deploying $APP ($BRANCH) at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"

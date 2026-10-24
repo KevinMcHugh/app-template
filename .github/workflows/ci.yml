@@ -79,11 +79,14 @@ jobs:
           fi
           sprite auth setup --token "$SPRITES_TOKEN"
 
-      # Pull before running the script, so a change to it applies in the
-      # same deploy even on a checkout that predates it.
+      # Move the checkout onto this branch and pull before running the
+      # script, so the deploy runs the script as committed here, even on a
+      # sprite whose checkout was on another branch or predates a change to
+      # it. redeploy.sh then does the same again, harmlessly.
       - name: Redeploy
         env:
           APP: ${{ vars.SPRITE_NAME }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           sprite exec -s "$APP" -- bash -lc \
-            "git -C ~/$APP pull -q --ff-only origin main && ~/$APP/deploy/redeploy.sh"
+            "git -C ~/$APP fetch -q origin $BRANCH && git -C ~/$APP checkout -q $BRANCH && git -C ~/$APP merge -q --ff-only origin/$BRANCH && BRANCH=$BRANCH ~/$APP/deploy/redeploy.sh"
