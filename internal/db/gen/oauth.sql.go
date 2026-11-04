@@ -146,29 +146,24 @@ func (q *Queries) GetOAuthClient(ctx context.Context, id string) (OauthClient, e
 }
 
 const getOAuthTokenByHash = `-- name: GetOAuthTokenByHash :one
-SELECT oauth_tokens.id, oauth_tokens.token_hash, oauth_tokens.client_id, oauth_tokens.api_key_id, oauth_tokens.scope, oauth_tokens.expires_at, oauth_tokens.refresh_token_hash, oauth_tokens.refresh_expires_at, oauth_tokens.revoked_at, oauth_tokens.created_at FROM oauth_tokens
+SELECT oauth_tokens.api_key_id, api_keys.user_id FROM oauth_tokens
 JOIN api_keys ON api_keys.id = oauth_tokens.api_key_id AND api_keys.deleted_at IS NULL
 WHERE token_hash = $1
   AND oauth_tokens.revoked_at IS NULL
   AND oauth_tokens.expires_at > NOW()
 `
 
-// A token stops working when its api key is deleted.
-func (q *Queries) GetOAuthTokenByHash(ctx context.Context, tokenHash string) (OauthToken, error) {
+type GetOAuthTokenByHashRow struct {
+	ApiKeyID string  `json:"api_key_id"`
+	UserID   *string `json:"user_id"`
+}
+
+// A token stops working when its api key is deleted. It acts as that key,
+// for the key's user.
+func (q *Queries) GetOAuthTokenByHash(ctx context.Context, tokenHash string) (GetOAuthTokenByHashRow, error) {
 	row := q.db.QueryRow(ctx, getOAuthTokenByHash, tokenHash)
-	var i OauthToken
-	err := row.Scan(
-		&i.ID,
-		&i.TokenHash,
-		&i.ClientID,
-		&i.ApiKeyID,
-		&i.Scope,
-		&i.ExpiresAt,
-		&i.RefreshTokenHash,
-		&i.RefreshExpiresAt,
-		&i.RevokedAt,
-		&i.CreatedAt,
-	)
+	var i GetOAuthTokenByHashRow
+	err := row.Scan(&i.ApiKeyID, &i.UserID)
 	return i, err
 }
 

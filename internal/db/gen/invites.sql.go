@@ -16,7 +16,7 @@ UPDATE invites SET used_at = NOW(), updated_at = NOW()
 WHERE code_hash = $1
   AND used_at IS NULL AND deleted_at IS NULL
   AND (expires_at IS NULL OR expires_at > NOW())
-RETURNING id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at
+RETURNING id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at, user_id
 `
 
 // Marks an invite used in one UPDATE, so two redemptions racing the same
@@ -34,6 +34,7 @@ func (q *Queries) ClaimInviteByHash(ctx context.Context, codeHash string) (Invit
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.UserID,
 	)
 	return i, err
 }
@@ -41,7 +42,7 @@ func (q *Queries) ClaimInviteByHash(ctx context.Context, codeHash string) (Invit
 const createInvite = `-- name: CreateInvite :one
 INSERT INTO invites (id, code_hash, note, expires_at)
 VALUES ($1, $2, $3, $4)
-RETURNING id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at
+RETURNING id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at, user_id
 `
 
 type CreateInviteParams struct {
@@ -69,6 +70,7 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.UserID,
 	)
 	return i, err
 }
@@ -87,7 +89,7 @@ func (q *Queries) DeleteInvite(ctx context.Context, id string) (int64, error) {
 }
 
 const listActiveInvites = `-- name: ListActiveInvites :many
-SELECT id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at FROM invites
+SELECT id, code_hash, note, expires_at, used_at, api_key_id, created_at, updated_at, deleted_at, user_id FROM invites
 WHERE used_at IS NULL AND deleted_at IS NULL
   AND (expires_at IS NULL OR expires_at > NOW())
 ORDER BY created_at DESC
@@ -113,6 +115,7 @@ func (q *Queries) ListActiveInvites(ctx context.Context) ([]Invite, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.UserID,
 		); err != nil {
 			return nil, err
 		}
@@ -125,16 +128,17 @@ func (q *Queries) ListActiveInvites(ctx context.Context) ([]Invite, error) {
 }
 
 const setInviteKey = `-- name: SetInviteKey :exec
-UPDATE invites SET api_key_id = $2, updated_at = NOW()
+UPDATE invites SET api_key_id = $2, user_id = $3, updated_at = NOW()
 WHERE id = $1
 `
 
 type SetInviteKeyParams struct {
 	ID       string  `json:"id"`
 	ApiKeyID *string `json:"api_key_id"`
+	UserID   *string `json:"user_id"`
 }
 
 func (q *Queries) SetInviteKey(ctx context.Context, arg SetInviteKeyParams) error {
-	_, err := q.db.Exec(ctx, setInviteKey, arg.ID, arg.ApiKeyID)
+	_, err := q.db.Exec(ctx, setInviteKey, arg.ID, arg.ApiKeyID, arg.UserID)
 	return err
 }

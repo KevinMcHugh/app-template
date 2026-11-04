@@ -16,6 +16,7 @@ type ApiKey struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
+	UserID     *string            `json:"user_id"`
 }
 
 type Invite struct {
@@ -28,6 +29,7 @@ type Invite struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	UserID    *string            `json:"user_id"`
 }
 
 type Note struct {
@@ -72,4 +74,41 @@ type OauthToken struct {
 	RefreshExpiresAt pgtype.Timestamptz `json:"refresh_expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type SsoLoginIntent struct {
+	State               string             `json:"state"`
+	Provider            string             `json:"provider"`
+	ReturnTo            *string            `json:"return_to"`
+	ClientID            *string            `json:"client_id"`
+	RedirectUri         *string            `json:"redirect_uri"`
+	CodeChallenge       *string            `json:"code_challenge"`
+	CodeChallengeMethod *string            `json:"code_challenge_method"`
+	DownstreamState     *string            `json:"downstream_state"`
+	Scope               *string            `json:"scope"`
+	InviteCode          *string            `json:"invite_code"`
+	LinkUserID          *string            `json:"link_user_id"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+type User struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type UserIdentity struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	Provider    string             `json:"provider"`
+	Subject     string             `json:"subject"`
+	Email       string             `json:"email"`
+	DisplayName *string            `json:"display_name"`
+	LastLoginAt pgtype.Timestamptz `json:"last_login_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
 }

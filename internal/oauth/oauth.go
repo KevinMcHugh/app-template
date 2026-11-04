@@ -4,7 +4,7 @@
 //
 // The flow: a client registers itself (POST /oauth/register), sends its user
 // to /oauth/authorize, where they paste an api key (or, the first time, an
-// invite, which mints them one), gets a code back on
+// invite, which mints them one) or sign in with Google, gets a code back on
 // its redirect_uri, and trades the code and its PKCE verifier at
 // /oauth/token for an access token (24 hours) and a refresh token (30 days).
 // The tokens act as the api key that approved them. claude.ai custom
@@ -52,6 +52,10 @@ type Handler struct {
 	// Invites redeems an invite pasted on the authorize page. Nil turns
 	// invites off: only existing api keys can authorize.
 	Invites InviteRedeemer
+	// GoogleStart is where "Sign in with Google" goes, carrying the
+	// authorize request on; "" hides the button. Package web serves it and
+	// finishes with Complete.
+	GoogleStart string
 }
 
 // InviteRedeemer spends an invite, minting the newcomer's api key, and runs
@@ -217,7 +221,7 @@ func (h *Handler) authorizeGET(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	renderAuthorize(w, h.AppName, http.StatusOK, p, "")
+	h.renderAuthorize(w, r, http.StatusOK, p, "")
 }
 
 // authorizePOST checks the pasted key, or redeems the pasted invite, mints a
@@ -239,13 +243,13 @@ func (h *Handler) authorizePOST(w http.ResponseWriter, r *http.Request) {
 	}
 	raw := strings.TrimSpace(r.FormValue("api_key"))
 	if raw == "" {
-		renderAuthorize(w, h.AppName, http.StatusBadRequest, p, "Paste your api key, or an invite if you are new.")
+		h.renderAuthorize(w, r, http.StatusBadRequest, p, "Paste your api key, or an invite if you are new.")
 		return
 	}
 	var code string
 	if strings.HasPrefix(raw, auth.InvitePrefix) {
 		if h.Invites == nil {
-			renderAuthorize(w, h.AppName, http.StatusBadRequest, p, "Invites are not accepted here.")
+			h.renderAuthorize(w, r, http.StatusBadRequest, p, "Invites are not accepted here.")
 			return
 		}
 		err := h.Invites.RedeemInvite(r.Context(), raw, func(q *dbgen.Queries, apiKeyID string) error {
@@ -255,7 +259,7 @@ func (h *Handler) authorizePOST(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				renderAuthorize(w, h.AppName, http.StatusBadRequest, p, "That invite is not recognized, or it has expired or already been used.")
+				h.renderAuthorize(w, r, http.StatusBadRequest, p, "That invite is not recognized, or it has expired or already been used.")
 				return
 			}
 			http.Error(w, "invite redemption failed", http.StatusInternalServerError)
@@ -265,7 +269,7 @@ func (h *Handler) authorizePOST(w http.ResponseWriter, r *http.Request) {
 		key, err := h.Q.GetAPIKeyByHash(r.Context(), auth.Hash(raw))
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				renderAuthorize(w, h.AppName, http.StatusBadRequest, p, "That api key is not recognized.")
+				h.renderAuthorize(w, r, http.StatusBadRequest, p, "That api key is not recognized.")
 				return
 			}
 			http.Error(w, "auth lookup failed", http.StatusInternalServerError)
@@ -288,6 +292,36 @@ func (h *Handler) authorizePOST(w http.ResponseWriter, r *http.Request) {
 	}
 	dest.RawQuery = q.Encode()
 	http.Redirect(w, r, dest.String(), http.StatusSeeOther)
+}
+
+// Complete approves an authorize request (its query, as /oauth/authorize
+// received it) as apiKeyID, for a sign-in that happened elsewhere (Google),
+// and returns where to send the browser: the client's redirect_uri with a
+// code. The request is checked again, since it has been through the
+// browser since.
+func (h *Handler) Complete(ctx context.Context, apiKeyID string, query url.Values) (string, error) {
+	p, msg := parseAuthorize(query)
+	if msg == "" {
+		msg = h.checkClient(ctx, p)
+	}
+	if msg != "" {
+		return "", errors.New(msg)
+	}
+	code, err := mintCode(ctx, h.Q, apiKeyID, p)
+	if err != nil {
+		return "", err
+	}
+	dest, err := url.Parse(p.RedirectURI)
+	if err != nil {
+		return "", err
+	}
+	q := dest.Query()
+	q.Set("code", code)
+	if p.State != "" {
+		q.Set("state", p.State)
+	}
+	dest.RawQuery = q.Encode()
+	return dest.String(), nil
 }
 
 // mintCode stores a one-time authorization code for apiKeyID on q.
@@ -454,14 +488,29 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 	writeJSON(w, status, map[string]string{"error": code, "error_description": desc})
 }
 
-func renderAuthorize(w http.ResponseWriter, appName string, status int, p authorizeParams, msg string) {
+func (h *Handler) renderAuthorize(w http.ResponseWriter, r *http.Request, status int, p authorizeParams, msg string) {
+	google := ""
+	if h.GoogleStart != "" {
+		// The request rides through Google and back as it came in.
+		q := url.Values{}
+		for k, v := range r.Form {
+			if k != "api_key" {
+				q[k] = v
+			}
+		}
+		if len(q) == 0 {
+			q = r.URL.Query()
+		}
+		google = h.GoogleStart + "?" + q.Encode()
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = authorizeTmpl.Execute(w, struct {
 		AppName, KeyPrefix, InvitePrefix string
 		Params                           authorizeParams
 		Error                            string
-	}{appName, auth.KeyPrefix, auth.InvitePrefix, p, msg})
+		Google                           string
+	}{h.AppName, auth.KeyPrefix, auth.InvitePrefix, p, msg, google})
 }
 
 var authorizeTmpl = template.Must(template.New("authorize").Parse(`<!doctype html>
@@ -497,5 +546,6 @@ button { font:inherit; padding:.6rem 1rem; border:0; border-radius:6px; backgrou
 <input type="hidden" name="scope" value="{{.Params.Scope}}">
 <button type="submit">Allow</button>
 </form>
+{{if .Google}}<p style="margin-top:1.5rem">Or <a href="{{.Google}}">sign in with Google</a> to connect this client as you.</p>{{end}}
 </body>
 </html>`))

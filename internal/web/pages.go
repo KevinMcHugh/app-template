@@ -36,6 +36,7 @@ func parsePages() map[string]*template.Template {
 func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name string, data map[string]any) {
 	data["AppName"] = app.Name
 	data["SignedIn"] = auth.KeyID(r.Context()) != ""
+	data["GoogleOn"] = s.Google.enabled()
 	data["Path"] = r.URL.RequestURI()
 	if _, ok := data["Flash"]; !ok {
 		data["Flash"] = r.URL.Query().Get("msg")

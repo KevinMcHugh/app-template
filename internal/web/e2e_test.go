@@ -60,13 +60,19 @@ func newEnv(t *testing.T) *env {
 	ts := httptest.NewServer(nil)
 	t.Cleanup(ts.Close)
 	store := app.NewStore(pool)
-	ts.Config.Handler = web.New(store, ts.URL).Handler()
+	srv := web.New(store, ts.URL)
+	srv.Google = fakeGoogle(t)
+	ts.Config.Handler = srv.Handler()
 
 	raw, err := auth.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := store.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: "test", KeyHash: auth.Hash(raw)})
+	user, err := store.CreateUser(ctx, dbgen.CreateUserParams{ID: xid.New().String(), Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: "test", KeyHash: auth.Hash(raw), UserID: &user.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
