@@ -107,6 +107,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/Unprocessable"
     delete:
@@ -155,6 +157,12 @@ components:
             type: string
     NotFound:
       description: No such resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Someone else changed it after the caller loaded it (the updatedAt sent is stale); reload, and make the change again
       content:
         application/json:
           schema:
@@ -239,7 +247,12 @@ components:
     NoteUpdate:
       type: object
       description: Fields left out are left alone.
+      required: [updatedAt]
       properties:
+        updatedAt:
+          type: string
+          format: date-time
+          description: The note's updatedAt as the caller last loaded it. If it has changed since, someone else saved in between, and the change is refused with a 409; reload, and make the change again.
         title:
           type: string
           x-go-type-skip-optional-pointer: false

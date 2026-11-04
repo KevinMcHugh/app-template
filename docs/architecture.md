@@ -19,7 +19,7 @@ Every surface ends in the same `Endpoint`. REST runs all three steps (`server.Ru
 | package | holds |
 | --- | --- |
 | `cmd/server` | `main`: `serve`, plus the `keys` and `invites` admin commands |
-| `internal/app` | `Store` (every sqlc query plus hand-written transactions), `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`, `Name` |
+| `internal/app` | `Store` (every sqlc query plus `InTx` and hand-written transactions), `Guard` (the stale-write check `InTx` runs), `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`/`ErrConflict`, `Name` |
 | `internal/server` | `Endpoint`, `Run`, `BuildViewModel`; `Server`, which implements the generated `StrictServerInterface`, maps errors to typed responses, and mounts the API with the spec-driven auth guard |
 | `internal/server/<resource>` | one `Endpoint` per operation, each with its own narrow `Store` interface, plus the resource's view model and its API conversion |
 | `internal/appmcp` | MCP tools and the server's `Instructions` |
@@ -41,13 +41,41 @@ type Endpoint[Req, M, VM, Res any] interface {
 - `Req` is the generated `…RequestObject`, even when an MCP tool or a page is the caller. They fill one in themselves, so input validation lives in the endpoint and nowhere else.
 - Each endpoint declares a `Store` interface with only the methods it calls (`notes.GetStore` is just `GetNote`). This keeps an endpoint's reach obvious and makes a fake easy to write. `*app.Store` satisfies every one, because it embeds `*dbgen.Queries` and sqlc generates every method.
 - View models carry JSON tags, because MCP tools return them as is.
-- Errors: wrap `app.ErrNotFound` or `app.ErrBadInput` with a message (`app.NotFound` converts pgx's no-rows). `server.go` turns them into the spec's 404 and 422 bodies, the pages turn them into statuses or a redirect with `?err=`, and MCP returns them as tool errors.
+- Errors: wrap `app.ErrNotFound` or `app.ErrBadInput` with a message (`app.NotFound` converts pgx's no-rows). `server.go` turns them into the spec's 404 and 422 bodies (and `app.ErrConflict` into a 409), the pages turn them into statuses or a redirect with `?err=`, and MCP returns them as tool errors.
+
+### Stale writes: `Guarded`
+
+When two people (or a person and their Claude) have the same note open, the second save would silently replace the first. So every PATCH takes the `updatedAt` of the thing as the caller last loaded it, and is refused with a 409 if it has changed since. The caller reloads, sees the other change, and makes theirs again.
+
+An endpoint opts in by implementing one more method beside the three above:
+
+```go
+type Guarded[Req any] interface {
+	Guard(req Req) app.Guard // the row it changes and the updatedAt the caller sent
+}
+
+func (UpdateEndpoint) Guard(req apigen.UpdateNoteRequestObject) app.Guard {
+	return app.Guard{Kind: "note", ID: req.NoteId, Seen: req.Body.UpdatedAt}
+}
+```
+
+and doing its write in `InTx`. `Run` and `BuildViewModel` put the guard on the context, and `Store.InTx` checks it first thing in the transaction: it locks the row (`LockForWrite`, in `db/queries/guard.sql`, `SELECT … FOR UPDATE`), compares its `updated_at` with what the caller saw, and returns `app.ErrConflict` if they differ, or `app.ErrBadInput` if the caller sent none. The lock is held until the write commits, so two saves racing from the same copy cannot both pass; exactly one lands. Because the check is inside `InTx`, it comes after validation, so a bad field is still a 422.
+
+Every surface sends the version back: API clients in the PATCH body, the note page in a hidden `updated_at` field on its edit form (a stale save redirects back with a message), and the `update_note` tool as a required `updatedAt` argument (a stale one is a tool error telling Claude to read the note again).
+
+Three things keep it from being forgotten or skipped:
+
+- `server.go` runs every PATCH through `RunGuarded`, which takes a `GuardedEndpoint`, so an update endpoint without `Guard` does not compile.
+- `Run` fails closed if a guarded endpoint finished without opening a transaction, because then nothing compared the versions (`TestUncheckedGuardFailsClosed`).
+- `TestEveryPatchIsGuarded` checks the spec: every PATCH body requires `updatedAt`, and every PATCH declares the 409.
+
+The check runs once per request, in the first `InTx`; a second transaction in the same request would otherwise take the first one's write for someone else's. Deletes are not guarded.
 
 ## Conventions
 
 - **xid ids** in `CHAR(20)`. They are sortable, URL-safe and short enough to read aloud.
 - **Soft delete everywhere.** Every live table has `created_at`, `updated_at`, `deleted_at`, and every query filters `deleted_at IS NULL`. A delete is an `UPDATE`, and `:execrows` tells the endpoint whether anything was there.
-- **Partial updates.** `COALESCE(sqlc.narg(x), x)` in SQL and a pointer field in the spec (`x-go-type-skip-optional-pointer: false`) mean a PATCH sends only what changes. Everything else optional stays a plain value (`prefer-skip-optional-pointer`), so conversions need no pointer per field.
+- **Partial updates.** `COALESCE(sqlc.narg(x), x)` in SQL and a pointer field in the spec (`x-go-type-skip-optional-pointer: false`) mean a PATCH sends only what changes. Everything else optional stays a plain value (`prefer-skip-optional-pointer`), so conversions need no pointer per field. The one field a PATCH always sends is `updatedAt`, as loaded, so a stale write is refused (see `Guarded` above).
 - **Users, no tenants.** A user is a person, and every api key belongs to one (`auth.UserID`). Everyone sees the same data, and the api key behind a request is recorded on what it creates (`created_by`). See "Adding owners and members" or "Adding tenants" below if your app needs isolation.
 
 ## Why it is this way

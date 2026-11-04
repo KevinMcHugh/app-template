@@ -11,6 +11,7 @@ package appmcp
 
 import (
 	"context"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -25,7 +26,7 @@ import (
 // app is for and the usual order of tools; keep it short.
 const Instructions = `This server stores notes: a title and a free-text body.
 
-Use list_notes to see what exists and get_note for one in full. create_note, update_note and delete_note change them. Confirm with the user before deleting anything.`
+Use list_notes to see what exists and get_note for one in full. create_note, update_note and delete_note change them. update_note takes the updatedAt you last read, and refuses the change if someone saved the note since; read it again, and check the change still makes sense, before retrying. Confirm with the user before deleting anything.`
 
 // NewServer builds the MCP server with every tool registered.
 func NewServer(store server.Store, links app.Links) *mcpsdk.Server {
@@ -62,9 +63,10 @@ type CreateNoteInput struct {
 }
 
 type UpdateNoteInput struct {
-	ID    string  `json:"id" jsonschema:"note id"`
-	Title *string `json:"title,omitempty" jsonschema:"new title; omit to keep it"`
-	Body  *string `json:"body,omitempty" jsonschema:"new body; omit to keep it"`
+	ID        string    `json:"id" jsonschema:"note id"`
+	UpdatedAt time.Time `json:"updatedAt" jsonschema:"the note's updatedAt exactly as get_note or list_notes last returned it; if someone has changed the note since, the update is refused, so read it again first"`
+	Title     *string   `json:"title,omitempty" jsonschema:"new title; omit to keep it"`
+	Body      *string   `json:"body,omitempty" jsonschema:"new body; omit to keep it"`
 }
 
 type OKOutput struct {
@@ -112,11 +114,11 @@ func registerWrite(s *mcpsdk.Server, store server.Store, links app.Links) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "update_note",
-		Description: "Change a note's title, body, or both. Fields left out stay as they are.",
+		Description: "Change a note's title, body, or both. Fields left out stay as they are. Send the note's updatedAt as you last read it; if it has changed since, the update is refused and you should read the note again before retrying.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in UpdateNoteInput) (*mcpsdk.CallToolResult, NoteOutput, error) {
 		vm, err := server.BuildViewModel(ctx, notes.UpdateEndpoint{Store: store, Links: links}, apigen.UpdateNoteRequestObject{
 			NoteId: in.ID,
-			Body:   &apigen.NoteUpdate{Title: in.Title, Body: in.Body},
+			Body:   &apigen.NoteUpdate{Title: in.Title, Body: in.Body, UpdatedAt: in.UpdatedAt},
 		})
 		return nil, NoteOutput{Note: vm}, err
 	})

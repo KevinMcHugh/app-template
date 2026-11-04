@@ -6,6 +6,8 @@ package dbgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -46,6 +48,12 @@ type Querier interface {
 	ListNotes(ctx context.Context) ([]Note, error)
 	ListUserIdentities(ctx context.Context, userID string) ([]UserIdentity, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	// LockForWrite locks the live row kind/id names until the transaction ends
+	// and returns when it last changed, for app.Guard to compare with what the
+	// caller last saw. FOR UPDATE is not allowed beside UNION, so each kind
+	// locks in its own CTE, and only the one whose kind matches reads a row.
+	// A new kind that takes a guard gets a CTE here and an arm below.
+	LockForWrite(ctx context.Context, arg LockForWriteParams) (pgtype.Timestamptz, error)
 	PurgeExpiredSSOLoginIntents(ctx context.Context) error
 	RevokeOAuthToken(ctx context.Context, id string) error
 	RevokeOAuthTokenByHash(ctx context.Context, tokenHash string) error

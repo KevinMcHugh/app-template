@@ -61,7 +61,7 @@ Add paths and schemas to `api/openapi.yaml`, following the notes entries. Then d
 - Leave `security` out and the operation is **private**, inheriting the global bearer-or-cookie requirement.
 - Add `security: []` only to make it **public**. Public responses also get `Access-Control-Allow-Origin: *`.
 
-For a PATCH body, mark each optional field `x-go-type-skip-optional-pointer: false`, so "not sent" differs from "sent empty".
+For a PATCH body, mark each optional field `x-go-type-skip-optional-pointer: false`, so "not sent" differs from "sent empty". Every PATCH body also requires `updatedAt` (`format: date-time`), every PATCH declares `"409": $ref: "#/components/responses/Conflict"`, and the resource's schema shows `updatedAt` so a client has one to send back; `TestEveryPatchIsGuarded` checks the first two.
 
 Name path parameters so they do not collide with schema names: oapi-codegen generates a Go type for both. Creature Lab's `Form` parameter clashed with its `Form` schema, for example.
 
@@ -80,7 +80,8 @@ Create `internal/server/widgets/widgets.go`, using `notes/notes.go` as the model
 - a view model `Widget` with JSON tags, `ToViewModel(dbgen.Widget, app.Links) Widget`, and an unexported `toAPI(Widget) apigen.Widget`;
 - for each operation, a narrow `Store` interface and an endpoint struct with `Interact`, `Build` and `Render`;
 - validation in `Interact`, returning `fmt.Errorf("%w: …", app.ErrBadInput)` or `app.NotFound(err, "widget", id)`;
-- `auth.KeyIDPtr(ctx)` for `created_by`.
+- `auth.KeyIDPtr(ctx)` for `created_by`;
+- on the update endpoint, a `Guard` method naming the row and the `updatedAt` the caller sent (`app.Guard{Kind: "widget", ID: req.WidgetId, Seen: req.Body.UpdatedAt}`), with the write done in `InTx`, which checks it; and a CTE and arm for the kind in `LockForWrite` (`db/queries/guard.sql`). See "Stale writes" in [architecture.md](architecture.md).
 
 If a view model links to a page, add a method to `app.Links`.
 
@@ -100,11 +101,11 @@ func (s *Server) GetWidget(ctx context.Context, req apigen.GetWidgetRequestObjec
 }
 ```
 
-Check `req.Body == nil` in operations that take a body, and return the 400.
+Check `req.Body == nil` in operations that take a body, and return the 400. A PATCH runs with `RunGuarded` instead of `Run`, and maps `isConflict(err)` to its 409 with `conflict(err)`.
 
 ## 7. MCP tools
 
-If Claude should see it, add tools in `internal/appmcp/appmcp.go`: an input struct with `jsonschema` descriptions, an output struct wrapping the view model, and a handler that calls `server.BuildViewModel` with a request object it fills in. Keep tool descriptions specific about when to use the tool. Say "confirm with the user first" on anything destructive, and update `Instructions` if the typical session changes.
+If Claude should see it, add tools in `internal/appmcp/appmcp.go`: an input struct with `jsonschema` descriptions, an output struct wrapping the view model, and a handler that calls `server.BuildViewModel` with a request object it fills in. Keep tool descriptions specific about when to use the tool. An update tool takes a required `updatedAt` (a `time.Time`) and passes it into the request body, as `update_note` does. Say "confirm with the user first" on anything destructive, and update `Instructions` if the typical session changes.
 
 ## 8. Pages
 
@@ -113,7 +114,7 @@ If people should see it in the browser, add a template in `internal/web/template
 - reads in the `auth.Optional` group, with forms wrapped in `{{if .SignedIn}}`;
 - writes in the `auth.Require` group, which also checks `sameOrigin`. Hiding a form is only for looks; this group is what actually stops an anonymous write.
 
-Post, then redirect with `redirect(w, r, path, msg, isErr)`. The pages run no script.
+Post, then redirect with `redirect(w, r, path, msg, isErr)`. The pages run no script. An edit form carries the `updatedAt` it was rendered from in a hidden `updated_at` field (RFC 3339 with nanoseconds), and its handler sends a conflict back as a message, as the note page does.
 
 ## 9. Tests
 
