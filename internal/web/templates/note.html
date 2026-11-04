@@ -11,6 +11,8 @@
 <details class="panel">
   <summary>Edit</summary>
   <form method="POST" action="/notes/{{.Note.ID}}" class="stack" style="margin-top:.75rem">
+    {{/* The copy this edit is made from: a save over someone else's newer one is refused. */}}
+    <input type="hidden" name="updated_at" value="{{.Note.UpdatedAt.Format "2006-01-02T15:04:05.999999999Z07:00"}}">
     <input name="title" value="{{.Note.Title}}" aria-label="Title" required maxlength="200">
     <textarea name="body" aria-label="Body">{{.Note.Body}}</textarea>
     <div><button type="submit">Save</button></div>

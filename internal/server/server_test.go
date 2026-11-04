@@ -9,20 +9,22 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	apigen "github.com/KevinMcHugh/app-template/internal/api/gen"
 	"github.com/KevinMcHugh/app-template/internal/app"
 	dbgen "github.com/KevinMcHugh/app-template/internal/db/gen"
 	"github.com/KevinMcHugh/app-template/internal/server"
 )
 
 // fakeStore answers the public reads from memory. Any other query panics
-// through the nil Querier, which is the point: a private operation must be
+// through the nil Store, which is the point: a private operation must be
 // refused before it reaches the store.
 type fakeStore struct {
-	dbgen.Querier
+	server.Store
 	note dbgen.Note
 }
 
@@ -88,5 +90,68 @@ func TestAnonymousCallers(t *testing.T) {
 	}
 	if note.ID != "n1" || note.Title != "hello" || note.URL != "https://app.example/notes/n1" {
 		t.Fatalf("note %+v", note)
+	}
+}
+
+// TestEveryPatchIsGuarded checks the stale-write contract on every PATCH,
+// including ones added after this test was: the body requires the
+// updatedAt the caller loaded, and the operation declares the 409 it gets
+// when that is stale. Server's handlers run them with RunGuarded, so the
+// endpoint behind each one has to name its Guard to compile.
+func TestEveryPatchIsGuarded(t *testing.T) {
+	spec, err := apigen.GetSwagger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for path, item := range spec.Paths.Map() {
+		op := item.Patch
+		if op == nil {
+			continue
+		}
+		n++
+		body := op.RequestBody.Value.Content.Get("application/json").Schema.Value
+		if !slices.Contains(body.Required, "updatedAt") {
+			t.Errorf("PATCH %s: the body does not require updatedAt", path)
+		}
+		if p := body.Properties["updatedAt"]; p == nil || p.Value.Format != "date-time" {
+			t.Errorf("PATCH %s: updatedAt is not a date-time", path)
+		}
+		if op.Responses.Status(http.StatusConflict) == nil {
+			t.Errorf("PATCH %s: no 409 response", path)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no PATCH operations in the spec")
+	}
+}
+
+// guardedNoTx is a Guarded endpoint that never opens a transaction, so
+// nothing checks its guard.
+type guardedNoTx struct{}
+
+func (guardedNoTx) Interact(context.Context, string) (string, error) { return "wrote", nil }
+func (guardedNoTx) Build(m string) string                            { return m }
+func (guardedNoTx) Render(vm string) string                          { return vm }
+func (guardedNoTx) Guard(string) app.Guard {
+	return app.Guard{Kind: "note", ID: "n1", Seen: time.Now()}
+}
+
+type unguarded struct{ guardedNoTx }
+
+func (unguarded) Guard() {} // not Guarded: the signature does not match
+
+// A Guarded endpoint whose write skipped InTx fails closed on every
+// surface, rather than writing with no comparison; others are untouched.
+func TestUncheckedGuardFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	if _, err := server.RunGuarded(ctx, guardedNoTx{}, "req"); err == nil {
+		t.Fatal("Run passed a guard nothing checked")
+	}
+	if _, err := server.BuildViewModel(ctx, guardedNoTx{}, "req"); err == nil {
+		t.Fatal("BuildViewModel passed a guard nothing checked")
+	}
+	if got, err := server.Run(ctx, unguarded{}, "req"); err != nil || got != "wrote" {
+		t.Fatalf("an unguarded endpoint: %q, %v", got, err)
 	}
 }

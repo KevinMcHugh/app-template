@@ -25,6 +25,9 @@ const BaseURL = "/api"
 // an endpoint needs a transaction that app.Store implements by hand.
 type Store interface {
 	dbgen.Querier
+	// InTx runs a write on one transaction, checking the request's Guard
+	// first (app.Store.InTx).
+	InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error
 }
 
 // Server implements apigen.StrictServerInterface by composing per-resource
@@ -135,6 +138,14 @@ func isNotFound(err error) bool { return errors.Is(err, app.ErrNotFound) }
 // of bounds.
 func isUnprocessable(err error) bool { return errors.Is(err, app.ErrBadInput) }
 
+// isConflict is a write over a row someone else changed since the caller
+// loaded it (a stale updatedAt; see Guarded).
+func isConflict(err error) bool { return errors.Is(err, app.ErrConflict) }
+
+func conflict(err error) apigen.ConflictJSONResponse {
+	return apigen.ConflictJSONResponse{Error: err.Error()}
+}
+
 func notFound(err error) apigen.NotFoundJSONResponse {
 	return apigen.NotFoundJSONResponse{Error: err.Error()}
 }
@@ -186,10 +197,12 @@ func (s *Server) UpdateNote(ctx context.Context, req apigen.UpdateNoteRequestObj
 	if req.Body == nil {
 		return apigen.UpdateNote400JSONResponse{BadRequestJSONResponse: bodyRequired()}, nil
 	}
-	resp, err := Run(ctx, notes.UpdateEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := RunGuarded(ctx, notes.UpdateEndpoint{Store: s.store, Links: s.links}, req)
 	switch {
 	case isNotFound(err):
 		return apigen.UpdateNote404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil
+	case isConflict(err):
+		return apigen.UpdateNote409JSONResponse{ConflictJSONResponse: conflict(err)}, nil
 	case isUnprocessable(err):
 		return apigen.UpdateNote422JSONResponse{UnprocessableJSONResponse: unprocessable(err)}, nil
 	}

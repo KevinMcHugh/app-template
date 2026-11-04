@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -13,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -161,13 +164,55 @@ func TestAPIFlow(t *testing.T) {
 	e.do("POST", "/api/notes", e.key, map[string]any{"title": "  "}, http.StatusUnprocessableEntity, nil)
 	e.do("POST", "/api/notes", e.key, map[string]any{"title": strings.Repeat("x", notes.MaxTitle+1)}, http.StatusUnprocessableEntity, nil)
 
-	// A PATCH changes only what it sends.
+	// A PATCH changes only what it sends. It sends back the updatedAt it
+	// loaded, and gets the new one.
 	var upd notes.Note
-	e.do("PATCH", "/api/notes/"+n.ID, e.key, map[string]any{"body": "changed"}, http.StatusOK, &upd)
-	if upd.Title != "first" || upd.Body != "changed" {
+	e.do("PATCH", "/api/notes/"+n.ID, e.key, map[string]any{"body": "changed", "updatedAt": n.UpdatedAt}, http.StatusOK, &upd)
+	if upd.Title != "first" || upd.Body != "changed" || !upd.UpdatedAt.After(n.UpdatedAt) {
 		t.Fatalf("updated %+v", upd)
 	}
-	e.do("PATCH", "/api/notes/nope", e.key, map[string]any{"body": "x"}, http.StatusNotFound, nil)
+	e.do("PATCH", "/api/notes/nope", e.key, map[string]any{"body": "x", "updatedAt": n.UpdatedAt}, http.StatusNotFound, nil)
+	// A write from a copy loaded before someone else's save is refused and
+	// changes nothing; so is one that does not say which copy it is from.
+	e.do("PATCH", "/api/notes/"+n.ID, e.key, map[string]any{"body": "stale", "updatedAt": n.UpdatedAt}, http.StatusConflict, nil)
+	e.do("PATCH", "/api/notes/"+n.ID, e.key, map[string]any{"body": "stale"}, http.StatusUnprocessableEntity, nil)
+	e.do("GET", "/api/notes/"+n.ID, "", nil, http.StatusOK, &upd)
+	if upd.Body != "changed" {
+		t.Fatalf("a refused write landed: %+v", upd)
+	}
+
+	// Two saves from the same copy at once: the row lock lets one in, and
+	// the others see its write.
+	const racers = 8
+	codes := make(chan int, racers)
+	for i := range racers {
+		go func() {
+			b, _ := json.Marshal(map[string]any{"body": fmt.Sprint(i), "updatedAt": upd.UpdatedAt})
+			req, _ := http.NewRequest("PATCH", e.url+"/api/notes/"+n.ID, bytes.NewReader(b))
+			req.Header.Set("Authorization", "Bearer "+e.key)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := e.client.Do(req)
+			if err != nil {
+				codes <- 0
+				return
+			}
+			resp.Body.Close()
+			codes <- resp.StatusCode
+		}()
+	}
+	won := 0
+	for range racers {
+		switch code := <-codes; code {
+		case http.StatusOK:
+			won++
+		case http.StatusConflict:
+		default:
+			t.Fatalf("racing save: status %d", code)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d of %d racing saves from one copy landed, want 1", won, racers)
+	}
 
 	// Reads are public.
 	var list struct{ Notes []notes.Note }
@@ -386,9 +431,21 @@ func TestWebPages(t *testing.T) {
 		t.Fatalf("an empty title should come back as a message: %d %s", resp.StatusCode, loc)
 	}
 
-	resp, _ = browser.PostForm(e.url+notePath, url.Values{"title": {"Groceries"}, "body": {"eggs"}})
+	// The edit form carries the copy it was made from, and a second save
+	// from that same copy is sent back with a message rather than landing.
+	m := regexp.MustCompile(`name="updated_at" value="([^"]+)"`).FindStringSubmatch(page(notePath))
+	if m == nil {
+		t.Fatal("the edit form has no updated_at")
+	}
+	edit := url.Values{"title": {"Groceries"}, "body": {"eggs"}, "updated_at": {html.UnescapeString(m[1])}}
+	resp, _ = browser.PostForm(e.url+notePath, edit)
 	if resp.StatusCode != http.StatusSeeOther || strings.Contains(resp.Header.Get("Location"), "err=") {
 		t.Fatalf("update: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	edit.Set("body", "stale")
+	resp, _ = browser.PostForm(e.url+notePath, edit)
+	if loc := resp.Header.Get("Location"); resp.StatusCode != http.StatusSeeOther || !strings.Contains(loc, "err=") {
+		t.Fatalf("a stale edit should come back as a message: %d %s", resp.StatusCode, loc)
 	}
 	signedIn := page(notePath + "?msg=Saved.")
 	for _, want := range []string{"eggs", "Saved.", "Edit", "Delete", "Sign out"} {
@@ -481,9 +538,14 @@ func TestMCPTools(t *testing.T) {
 	var created struct{ Note notes.Note }
 	call("create_note", map[string]any{"title": "From Claude", "body": "hi"}, &created)
 	var updated struct{ Note notes.Note }
-	call("update_note", map[string]any{"id": created.Note.ID, "title": "Renamed"}, &updated)
+	call("update_note", map[string]any{"id": created.Note.ID, "title": "Renamed", "updatedAt": created.Note.UpdatedAt}, &updated)
 	if updated.Note.Title != "Renamed" || updated.Note.Body != "hi" {
 		t.Fatalf("update_note: %+v", updated.Note)
+	}
+	// An update from a stale read is a tool error, and changes nothing.
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "update_note", Arguments: map[string]any{"id": created.Note.ID, "title": "Stale", "updatedAt": created.Note.UpdatedAt}})
+	if err != nil || !res.IsError {
+		t.Fatalf("a stale update_note should be a tool error: %v %+v", err, res)
 	}
 	var list struct{ Notes []notes.Note }
 	call("list_notes", nil, &list)
@@ -493,7 +555,7 @@ func TestMCPTools(t *testing.T) {
 	var ok struct{ OK bool }
 	call("delete_note", map[string]any{"id": created.Note.ID}, &ok)
 
-	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "get_note", Arguments: map[string]any{"id": created.Note.ID}})
+	res, err = session.CallTool(ctx, &mcpsdk.CallToolParams{Name: "get_note", Arguments: map[string]any{"id": created.Note.ID}})
 	if err != nil || !res.IsError {
 		t.Fatalf("a deleted note should come back as a tool error: %v %+v", err, res)
 	}

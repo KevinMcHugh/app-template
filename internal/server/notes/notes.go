@@ -188,11 +188,13 @@ func (e CreateEndpoint) Render(vm Note) apigen.CreateNoteResponseObject {
 // -----------------------------------------------------------------------------
 
 type UpdateStore interface {
-	UpdateNote(ctx context.Context, arg dbgen.UpdateNoteParams) (dbgen.Note, error)
+	InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error
 }
 
 // UpdateEndpoint changes a note's title, body, or both; a field left nil is
-// left alone.
+// left alone. It is Guarded: the caller sends back the updatedAt it loaded,
+// and a change over someone else's newer one is refused (app.ErrConflict).
+// The write happens in InTx, which checks the guard.
 type UpdateEndpoint struct {
 	Store UpdateStore
 	Links app.Links
@@ -214,8 +216,18 @@ func (e UpdateEndpoint) Interact(ctx context.Context, req apigen.UpdateNoteReque
 		}
 		arg.Body = &body
 	}
-	row, err := e.Store.UpdateNote(ctx, arg)
-	return row, app.NotFound(err, "note", req.NoteId)
+	var row dbgen.Note
+	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+		var err error
+		row, err = q.UpdateNote(ctx, arg)
+		return app.NotFound(err, "note", req.NoteId)
+	})
+	return row, err
+}
+
+// Guard names the row the update changes and the version the caller saw.
+func (UpdateEndpoint) Guard(req apigen.UpdateNoteRequestObject) app.Guard {
+	return app.Guard{Kind: "note", ID: req.NoteId, Seen: req.Body.UpdatedAt}
 }
 
 func (e UpdateEndpoint) Build(row dbgen.Note) Note { return ToViewModel(row, e.Links) }

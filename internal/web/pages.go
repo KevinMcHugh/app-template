@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -62,6 +63,8 @@ func statusOf(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, app.ErrBadInput):
 		return http.StatusUnprocessableEntity
+	case errors.Is(err, app.ErrConflict):
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}
@@ -127,11 +130,14 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	title, body := r.FormValue("title"), r.FormValue("body")
+	// A missing or malformed updated_at leaves seen zero, which the guard
+	// refuses as bad input.
+	seen, _ := time.Parse(time.RFC3339Nano, r.FormValue("updated_at"))
 	_, err := server.BuildViewModel(r.Context(), notes.UpdateEndpoint{Store: s.Store, Links: s.Links}, apigen.UpdateNoteRequestObject{
 		NoteId: id,
-		Body:   &apigen.NoteUpdate{Title: &title, Body: &body},
+		Body:   &apigen.NoteUpdate{Title: &title, Body: &body, UpdatedAt: seen},
 	})
-	if errors.Is(err, app.ErrBadInput) {
+	if errors.Is(err, app.ErrBadInput) || errors.Is(err, app.ErrConflict) {
 		redirect(w, r, "/notes/"+url.PathEscape(id), err.Error(), true)
 		return
 	}

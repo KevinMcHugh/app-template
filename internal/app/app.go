@@ -22,7 +22,8 @@ import (
 const Name = "App Template"
 
 // Errors the surfaces (REST, MCP, web) map to their own responses: REST to
-// 404 and 422, the pages to the same statuses, and MCP to a tool error.
+// 404 and 422 (and ErrConflict, in guard.go, to 409), the pages to the same
+// statuses, and MCP to a tool error.
 var (
 	ErrNotFound = errors.New("not found")
 	ErrBadInput = errors.New("bad input")
@@ -86,14 +87,21 @@ func (s *Store) RedeemInvite(ctx context.Context, raw string, approve func(q *db
 	return tx.Commit(ctx)
 }
 
-// InTx runs fn on one transaction, committing only if it returns nil.
+// InTx runs fn on one transaction, committing only if it returns nil. If
+// ctx carries a Guard (WithGuard), it is checked first: see Guard.
 func (s *Store) InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
-	if err := fn(s.WithTx(tx)); err != nil {
+	q := s.WithTx(tx)
+	// A request that carries a Guard checks it first, so the row stays
+	// locked, and as the caller saw it, until fn's write commits.
+	if err := checkGuard(ctx, q); err != nil {
+		return err
+	}
+	if err := fn(q); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
