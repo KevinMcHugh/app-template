@@ -1,6 +1,7 @@
 // Package auth carries who a request is from, and the key and token
-// formats. There are no tenants: every caller sees the same data, and the
-// api key that authenticated a request is recorded on what it creates.
+// formats. A request acts as an api key, which belongs to a user (the
+// person); there are no tenants, so every caller sees the same data, and
+// the key is recorded on what it creates.
 package auth
 
 import (
@@ -53,20 +54,36 @@ func Hash(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Caller is who a request acts as.
+type Caller struct {
+	// KeyID is the api key behind the request: used directly, or through an
+	// OAuth token or web session it approved.
+	KeyID string
+	// UserID is the person the key belongs to. "" for a key minted before
+	// there were users and never given one.
+	UserID string
+}
+
 type ctxKey struct{}
 
-// WithKey returns ctx carrying the id of the api key a request acts as
-// (directly, or through an OAuth token or web session it approved).
-func WithKey(ctx context.Context, apiKeyID string) context.Context {
-	return context.WithValue(ctx, ctxKey{}, apiKeyID)
+// WithCaller returns ctx carrying c.
+func WithCaller(ctx context.Context, c Caller) context.Context {
+	return context.WithValue(ctx, ctxKey{}, c)
+}
+
+// CallerFrom is the request's caller; the zero Caller outside one (a CLI
+// command, a test).
+func CallerFrom(ctx context.Context) Caller {
+	c, _ := ctx.Value(ctxKey{}).(Caller)
+	return c
 }
 
 // KeyID is the api key the request acts as, or "" outside an authenticated
-// request (a CLI command, a test).
-func KeyID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKey{}).(string)
-	return v
-}
+// request.
+func KeyID(ctx context.Context) string { return CallerFrom(ctx).KeyID }
+
+// UserID is the person the request acts for, or "".
+func UserID(ctx context.Context) string { return CallerFrom(ctx).UserID }
 
 // KeyIDPtr is KeyID as a nullable column value.
 func KeyIDPtr(ctx context.Context) *string {

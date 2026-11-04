@@ -13,30 +13,45 @@ type Querier interface {
 	// code cannot both succeed.
 	ClaimInviteByHash(ctx context.Context, codeHash string) (Invite, error)
 	ConsumeOAuthCode(ctx context.Context, codeHash string) (OauthCode, error)
+	ConsumeSSOLoginIntent(ctx context.Context, state string) (SsoLoginIntent, error)
 	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error)
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error)
 	CreateNote(ctx context.Context, arg CreateNoteParams) (Note, error)
 	CreateOAuthClient(ctx context.Context, arg CreateOAuthClientParams) (OauthClient, error)
 	CreateOAuthCode(ctx context.Context, arg CreateOAuthCodeParams) error
 	CreateOAuthToken(ctx context.Context, arg CreateOAuthTokenParams) error
+	// ---- Google sign-in ---------------------------------------------------------
+	CreateSSOLoginIntent(ctx context.Context, arg CreateSSOLoginIntentParams) error
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) (UserIdentity, error)
 	DeleteAPIKey(ctx context.Context, id string) error
 	DeleteInvite(ctx context.Context, id string) (int64, error)
 	DeleteNote(ctx context.Context, id string) (int64, error)
 	GetAPIKey(ctx context.Context, id string) (ApiKey, error)
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
+	// The key a user's web sessions act as: their first. Signing in with
+	// Google mints one the first time; nobody ever sees it.
+	GetKeyForUser(ctx context.Context, userID *string) (ApiKey, error)
 	GetNote(ctx context.Context, id string) (Note, error)
 	GetOAuthClient(ctx context.Context, id string) (OauthClient, error)
-	// A token stops working when its api key is deleted.
-	GetOAuthTokenByHash(ctx context.Context, tokenHash string) (OauthToken, error)
+	// A token stops working when its api key is deleted. It acts as that key,
+	// for the key's user.
+	GetOAuthTokenByHash(ctx context.Context, tokenHash string) (GetOAuthTokenByHashRow, error)
 	GetOAuthTokenByRefreshHash(ctx context.Context, refreshTokenHash *string) (OauthToken, error)
+	GetUser(ctx context.Context, id string) (User, error)
+	GetUserIdentity(ctx context.Context, arg GetUserIdentityParams) (UserIdentity, error)
 	ListAPIKeys(ctx context.Context) ([]ApiKey, error)
 	// Unused, unexpired, undeleted invites.
 	ListActiveInvites(ctx context.Context) ([]Invite, error)
 	ListNotes(ctx context.Context) ([]Note, error)
+	ListUserIdentities(ctx context.Context, userID string) ([]UserIdentity, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	PurgeExpiredSSOLoginIntents(ctx context.Context) error
 	RevokeOAuthToken(ctx context.Context, id string) error
 	RevokeOAuthTokenByHash(ctx context.Context, tokenHash string) error
 	SetInviteKey(ctx context.Context, arg SetInviteKeyParams) error
 	TouchAPIKey(ctx context.Context, id string) error
+	TouchUserIdentity(ctx context.Context, arg TouchUserIdentityParams) error
 	// Sets whichever of title and body are given (non-null) and leaves the
 	// rest alone, so a PATCH can send one field.
 	UpdateNote(ctx context.Context, arg UpdateNoteParams) (Note, error)

@@ -2,7 +2,11 @@
 // process, plus the admin commands that mint credentials. See README.md.
 //
 //	server [serve]                    run the server (DATABASE_URL, PORT, PUBLIC_URL)
-//	server keys create --name NAME    mint an api key (printed once)
+//	server keys create --name NAME [--user USER]
+//	                                  mint an api key (printed once) for a
+//	                                  user (an id or a name); with no --user,
+//	                                  for a new user called NAME
+//	server users list                 list users, with their sign-ins
 //	server keys list                  list live api keys
 //	server keys rotate --id ID        replace a key, keeping its name
 //	server keys delete --id ID        revoke a key and every token it approved
@@ -13,6 +17,9 @@
 //
 // Credentials are minted here and nowhere else: there is no API or MCP tool
 // for it, so whoever can run this binary against the database is the admin.
+// (Signing in with Google mints a web session, as pasting a key on /login
+// does, and the first time also the person's own api key, which nobody
+// ever sees: see docs/auth.md.)
 package main
 
 import (
@@ -51,8 +58,10 @@ func main() {
 		err = keys(args)
 	case "invites":
 		err = invites(args)
+	case "users":
+		err = users(args)
 	default:
-		err = fmt.Errorf("unknown command %q; use serve, keys or invites", cmd)
+		err = fmt.Errorf("unknown command %q; use serve, keys, users or invites", cmd)
 	}
 	if err != nil {
 		slog.Error("server", "err", err)
@@ -74,6 +83,8 @@ func serve() error {
 		issuer = "http://localhost:" + port
 	}
 	srv := web.New(app.NewStore(pool), issuer)
+	// Google sign-in is on when both are set (docs/configuration.md).
+	srv.Google = web.GoogleConfig{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")}
 	slog.Info("listening", "port", port, "public_url", issuer)
 	hs := &http.Server{Addr: ":" + port, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	return hs.ListenAndServe()
@@ -87,6 +98,7 @@ func keys(args []string) error {
 	fs := flag.NewFlagSet("keys "+sub, flag.ExitOnError)
 	name := fs.String("name", "", "label for the key (create)")
 	id := fs.String("id", "", "key id (rotate, delete)")
+	user := fs.String("user", "", "the user the key belongs to, by id or name; default a new user called NAME (create)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -103,20 +115,47 @@ func keys(args []string) error {
 		if *name == "" {
 			return errors.New("--name is required")
 		}
-		return mint(ctx, q, *name)
+		var userID string
+		if *user != "" {
+			u, err := findUser(ctx, q, *user)
+			if err != nil {
+				return err
+			}
+			userID = u.ID
+		} else {
+			u, err := q.CreateUser(ctx, dbgen.CreateUserParams{ID: xid.New().String(), Name: *name})
+			if err != nil {
+				return fmt.Errorf("create user: %w", err)
+			}
+			fmt.Printf("user_id: %s (new user %s)\n", u.ID, u.Name)
+			userID = u.ID
+		}
+		return mint(ctx, q, *name, &userID)
 	case "list":
 		rows, err := q.ListAPIKeys(ctx)
 		if err != nil {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tCREATED\tLAST USED")
+		all, err := q.ListUsers(ctx)
+		if err != nil {
+			return err
+		}
+		names := map[string]string{}
+		for _, u := range all {
+			names[u.ID] = u.Name
+		}
+		fmt.Fprintln(tw, "ID\tNAME\tUSER\tCREATED\tLAST USED")
 		for _, r := range rows {
 			last := "-"
 			if r.LastUsedAt.Valid {
 				last = r.LastUsedAt.Time.UTC().Format(time.DateTime)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.ID, r.Name, r.CreatedAt.Time.UTC().Format(time.DateTime), last)
+			owner := "-"
+			if r.UserID != nil {
+				owner = names[*r.UserID]
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.ID, r.Name, owner, r.CreatedAt.Time.UTC().Format(time.DateTime), last)
 		}
 		return tw.Flush()
 	case "rotate", "delete":
@@ -137,7 +176,7 @@ func keys(args []string) error {
 			return nil
 		}
 		fmt.Printf("rotated key %s (%s)\n", old.ID, old.Name)
-		return mint(ctx, q, old.Name)
+		return mint(ctx, q, old.Name, old.UserID)
 	default:
 		return fmt.Errorf("unknown keys subcommand %q", sub)
 	}
@@ -214,17 +253,88 @@ func invites(args []string) error {
 	}
 }
 
-func mint(ctx context.Context, q *dbgen.Queries, name string) error {
+func mint(ctx context.Context, q *dbgen.Queries, name string, userID *string) error {
 	raw, err := auth.GenerateKey()
 	if err != nil {
 		return err
 	}
-	row, err := q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: name, KeyHash: auth.Hash(raw)})
+	row, err := q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: name, KeyHash: auth.Hash(raw), UserID: userID})
 	if err != nil {
 		return fmt.Errorf("create api key: %w", err)
 	}
 	fmt.Printf("key_id:  %s\napi_key: %s\n\nSave the key now; it is never shown again.\n", row.ID, raw)
 	return nil
+}
+
+// findUser is a user by id, or else by name, which must be unambiguous.
+func findUser(ctx context.Context, q *dbgen.Queries, idOrName string) (dbgen.User, error) {
+	all, err := q.ListUsers(ctx)
+	if err != nil {
+		return dbgen.User{}, err
+	}
+	var found []dbgen.User
+	for _, u := range all {
+		if u.ID == idOrName {
+			return u, nil
+		}
+		if strings.EqualFold(u.Name, idOrName) {
+			found = append(found, u)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return dbgen.User{}, fmt.Errorf("no user %q (%s)", idOrName, userNames(all))
+	default:
+		return dbgen.User{}, fmt.Errorf("%d users are called %q; use an id from users list", len(found), idOrName)
+	}
+}
+
+func userNames(all []dbgen.User) string {
+	if len(all) == 0 {
+		return "there are no users yet; keys create makes one"
+	}
+	names := make([]string, len(all))
+	for i, u := range all {
+		names[i] = u.Name
+	}
+	return "users: " + strings.Join(names, ", ")
+}
+
+// users lists the people who can sign in.
+func users(args []string) error {
+	if len(args) == 0 || args[0] != "list" {
+		return errors.New("usage: users list")
+	}
+	ctx := context.Background()
+	pool, err := openPool(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	q := dbgen.New(pool)
+	all, err := q.ListUsers(ctx)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tSIGN-INS\tCREATED")
+	for _, u := range all {
+		ids, err := q.ListUserIdentities(ctx, u.ID)
+		if err != nil {
+			return err
+		}
+		signIns := make([]string, len(ids))
+		for i, id := range ids {
+			signIns[i] = id.Provider + ":" + id.Email
+		}
+		if len(signIns) == 0 {
+			signIns = []string{"-"}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", u.ID, u.Name, strings.Join(signIns, ", "), u.CreatedAt.Time.UTC().Format(time.DateTime))
+	}
+	return tw.Flush()
 }
 
 func openPool(ctx context.Context) (*pgxpool.Pool, error) {

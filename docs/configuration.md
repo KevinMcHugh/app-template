@@ -16,6 +16,7 @@
 | `DATABASE_URL` | `cmd/server` (serve, keys, invites), `make migrate` | on a sprite: `postgres:///<app>?host=/var/run/postgresql&sslmode=disable` (local socket, no password) |
 | `PORT` | `cmd/server serve` | default `8080`; must match the service's `--http-port` |
 | `PUBLIC_URL` | `cmd/server serve` | the app's https origin; OAuth discovery advertises it, so it must be exact |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `cmd/server serve` | optional: both set turns on "Sign in with Google" ([auth.md](auth.md)). An OAuth client of type "Web application" in Google Cloud, with `PUBLIC_URL` + `/auth/google/callback` as its authorized redirect URI |
 | `TEST_DATABASE_URL` | tests only | a scratch database the end-to-end tests may wipe; never set on a sprite |
 
 Read settings once, at startup, in `cmd/server/main.go`, or in a `FromEnv` constructor that main calls (mr-ebay's `ebay.FromEnv`), and pass the values down. Packages below main never call `os.Getenv`, so tests can configure them directly. An optional secret that is missing should leave the app running and say what is missing (mr-ebay logs "eBay is not configured" and answers searches with that error), not crash it.

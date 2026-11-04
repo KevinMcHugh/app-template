@@ -31,9 +31,9 @@ new-migration: ## Create a migration file (usage: make new-migration NAME=create
 	@if [ -z "$(NAME)" ]; then echo "usage: make new-migration NAME=<description>"; exit 1; fi
 	$(DBMATE) new "$(NAME)"
 
-key: ## Mint an api key (usage: make key NAME=kev)
-	@if [ -z "$(NAME)" ]; then echo "usage: make key NAME=<label>"; exit 1; fi
-	go run ./cmd/server keys create --name "$(NAME)"
+key: ## Mint an api key, for a new user called NAME unless FOR names one (usage: make key NAME=kev [FOR=kev])
+	@if [ -z "$(NAME)" ]; then echo "usage: make key NAME=<label> [FOR=<user>]"; exit 1; fi
+	go run ./cmd/server keys create --name "$(NAME)" $(if $(FOR),--user "$(FOR)",)
 
 invite: ## Mint a single-use invite for a newcomer (usage: make invite NOTE=ana)
 	go run ./cmd/server invites create --note "$(NOTE)"

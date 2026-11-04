@@ -48,7 +48,7 @@ type Endpoint[Req, M, VM, Res any] interface {
 - **xid ids** in `CHAR(20)`. They are sortable, URL-safe and short enough to read aloud.
 - **Soft delete everywhere.** Every live table has `created_at`, `updated_at`, `deleted_at`, and every query filters `deleted_at IS NULL`. A delete is an `UPDATE`, and `:execrows` tells the endpoint whether anything was there.
 - **Partial updates.** `COALESCE(sqlc.narg(x), x)` in SQL and a pointer field in the spec (`x-go-type-skip-optional-pointer: false`) mean a PATCH sends only what changes. Everything else optional stays a plain value (`prefer-skip-optional-pointer`), so conversions need no pointer per field.
-- **No tenants.** Everyone sees the same data, and the api key behind a request is recorded on what it creates (`created_by`). See "Adding tenants" below if your app needs isolation.
+- **Users, no tenants.** A user is a person, and every api key belongs to one (`auth.UserID`). Everyone sees the same data, and the api key behind a request is recorded on what it creates (`created_by`). See "Adding owners and members" or "Adding tenants" below if your app needs isolation.
 
 ## Why it is this way
 
@@ -61,6 +61,19 @@ Most of these were learned the hard way in inventory or Creature Lab.
 - **MCP is at `/mcp/rpc`, not `/mcp`.** The sprites.dev proxy intercepts the bare `/mcp` path, and POSTs hang before reaching the app.
 - **The server never calls a model.** The connected client (the person's own Claude) does the thinking, so usage costs whatever their plan costs. If you add server-side generation, put it behind its own key, a stored budget, and a cost recorded per call.
 - **An empty `{{define}}` does not override a `{{block}}`.** Go templates treat a whitespace-only definition as empty and keep the original. Creature Lab's login page did this and ended up with a Sign out button. Give an override some content.
+
+## Adding owners and members
+
+When a resource belongs to some people and not others (a document with collaborators, a project, a game), give it members. [rpg](https://github.com/KevinMcHugh/rpg) does this for its games:
+
+1. A `<resource>_members` table of (resource id, user id, role), with a unique index so a user is in a resource once, and one so it has one owner. Whoever creates the resource becomes its owner in the same transaction.
+2. One query that, given what a request is about (the resource or anything in it) and the caller's user, returns the resource it belongs to and the caller's role. Every endpoint calls a helper on it (`app.Access`) before anything else, so REST, MCP and the pages all get the rule.
+3. Something in a resource the caller is not a member of is a **404**, exactly like something that does not exist, never a 403, so a resource does not leak by existing. A 403 is for a member whose role does not allow the action.
+4. Lists filter by membership (`JOIN <resource>_members … WHERE user_id = $1`).
+5. Members join by a single-use link the owner makes over the API. Store only a hash of its code, and redeem it on a page where the person signs in (with Google, which makes their account if they are new), never through the API or MCP, so a link is not a credential.
+6. A test that sends every operation in the spec as a stranger and expects a 404 from each, so an endpoint that forgets the check fails. Server commands get a system caller that reaches everything.
+
+Unlike tenants, a user can be in many resources, so the resource comes from what a request is about rather than from the key.
 
 ## Adding tenants
 

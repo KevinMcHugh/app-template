@@ -44,8 +44,8 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{Queries: dbgen.New(pool), Pool: pool}
 }
 
-// RedeemInvite spends a single-use invite: it mints the newcomer's api key
-// (named after the invite's note) and runs approve with that key on the same
+// RedeemInvite spends a single-use invite: it makes the newcomer a user and
+// mints their api key (both named after the invite's note), and runs approve with that key on the same
 // transaction, so an invite is only used up if what it was redeemed for
 // (an OAuth code) is stored too. An unknown, used, expired or deleted invite
 // is pgx.ErrNoRows. The raw key is never shown to anyone: the newcomer acts
@@ -69,14 +69,31 @@ func (s *Store) RedeemInvite(ctx context.Context, raw string, approve func(q *db
 	if err != nil {
 		return err
 	}
-	row, err := q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: name, KeyHash: auth.Hash(key)})
+	user, err := q.CreateUser(ctx, dbgen.CreateUserParams{ID: xid.New().String(), Name: name})
 	if err != nil {
 		return err
 	}
-	if err := q.SetInviteKey(ctx, dbgen.SetInviteKeyParams{ID: inv.ID, ApiKeyID: &row.ID}); err != nil {
+	row, err := q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{ID: xid.New().String(), Name: name, KeyHash: auth.Hash(key), UserID: &user.ID})
+	if err != nil {
+		return err
+	}
+	if err := q.SetInviteKey(ctx, dbgen.SetInviteKeyParams{ID: inv.ID, ApiKeyID: &row.ID, UserID: &user.ID}); err != nil {
 		return err
 	}
 	if err := approve(q, row.ID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// InTx runs fn on one transaction, committing only if it returns nil.
+func (s *Store) InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
+	if err := fn(s.WithTx(tx)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

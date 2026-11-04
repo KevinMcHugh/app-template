@@ -10,7 +10,7 @@ The example resource is **notes** (a title and a body). It shows every layer: mi
 
 - **One contract per operation.** `api/openapi.yaml` is the source of truth. oapi-codegen generates a strict server from it, and each operation is an `Endpoint` (Interact → Build → Render). REST, the MCP tools and the web pages all drive the same endpoint, so a rule lives in one place.
 - **Postgres through sqlc**, migrations through dbmate, with xid ids, soft delete, and `created_at`/`updated_at`/`deleted_at` on every table.
-- **Auth that claude.ai can use:** api keys for scripts and Claude Code; OAuth 2.1 (dynamic client registration and PKCE) for claude.ai custom connectors; single-use invites for newcomers; cookie sessions for the pages. The spec decides who may call what: an operation with `security: []` is public, and everything else is private.
+- **Users and auth that claude.ai can use:** users who sign in with Google or an api key; api keys for scripts and Claude Code; OAuth 2.1 (dynamic client registration and PKCE) for claude.ai custom connectors; single-use invites for newcomers; cookie sessions for the pages. The spec decides who may call what: an operation with `security: []` is public, and everything else is private.
 - **Server-rendered pages with no script.** html/template behind a strict CSP. There is no npm step, so the binary is the whole deploy.
 - **Tests** that pin which operations are public without needing a database, plus end-to-end tests of the API, OAuth, invites, the pages and a real MCP client session against Postgres.
 - **Deploy:** sprite setup steps, a redeploy script (checkpoint, migrate, build, swap the binary, health check, roll back) and a CI workflow that runs it. Config and secrets go on the sprite service's environment, never in env files ([docs/configuration.md](docs/configuration.md)).
@@ -32,7 +32,7 @@ Prereqs: Go (the version in `go.mod`; `go` fetches it if yours is older) and Pos
 export DATABASE_URL="postgres://localhost/app?sslmode=disable"
 createdb app
 make dev                 # migrate, then serve on :8080
-make key NAME=you        # in another terminal: mint an api key (printed once)
+make key NAME=you        # in another terminal: make you a user and mint your api key (printed once)
 ```
 
 Open http://localhost:8080, sign in with the key, and add a note. From a script:
@@ -73,7 +73,7 @@ tools/rename.sh         make a copy your own
 | `make check` | fail if the generated code is stale (CI runs it) |
 | `make migrate` / `make rollback` | dbmate up / roll back the last migration |
 | `make new-migration NAME=…` | create a timestamped migration file |
-| `make key NAME=…` | mint an api key |
+| `make key NAME=… [FOR=…]` | mint an api key: for a new user called `NAME`, or for user `FOR` |
 | `make invite NOTE=…` | mint a single-use invite |
 | `make build` | compile to `bin/server` |
 | `make test` | run the tests; set `TEST_DATABASE_URL` to a scratch database **the tests may wipe** to include the end-to-end ones |

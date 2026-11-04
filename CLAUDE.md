@@ -15,8 +15,8 @@ To change something in a generated file, edit its source (the spec, a query or a
 - **Soft delete.** Every live table has `created_at`, `updated_at`, `deleted_at`. Every query filters `deleted_at IS NULL`. Deletes set `deleted_at = NOW()`.
 - **The spec decides who may call what.** An operation is private unless its spec entry says `security: []`. Never make a route public in the router. `TestPublicOperations` pins the public set, so update it when you deliberately change the set.
 - **One endpoint per operation, shared by every surface.** REST runs it with `server.Run`. MCP tools and pages run it with `server.BuildViewModel`, then present the view model their own way. Put a rule in the endpoint, never in a tool or a page handler.
-- **Who is calling comes from the context.** `auth.KeyID(ctx)` (or `auth.KeyIDPtr` for a nullable `created_by`). Never take it as a tool argument or a request field.
-- **Credentials are minted by the CLI only** (`server keys …`, `server invites …`). Do not add API or MCP operations that create keys or invites.
+- **Who is calling comes from the context.** `auth.KeyID(ctx)` (or `auth.KeyIDPtr` for a nullable `created_by`), and the person behind it from `auth.UserID(ctx)`. Never take it as a tool argument or a request field.
+- **Credentials are minted by the CLI only** (`server keys …`, `server invites …`). Do not add API or MCP operations that create keys or invites, or that change a key's user. The one exception is Google sign-in, which mints a session and, the first time, the person's own api key, which nobody sees.
 - **Config and secrets are environment variables on the sprite service, never files.** Set them with `sprite-env services create … --env` (through the Fly.io connector's `exec` if that is how you reach the sprite), read them once in `cmd/server/main.go`, and pass them down. No `.env` files, no dotenv loading, no exports in `~/.profile`, no launcher script that sources config. See @docs/configuration.md.
 - **Pages run no script.** The CSP is `default-src 'none'`. Use forms that post and redirect, not JavaScript.
 

@@ -20,7 +20,7 @@ WHERE code_hash = $1
 RETURNING *;
 
 -- name: SetInviteKey :exec
-UPDATE invites SET api_key_id = $2, updated_at = NOW()
+UPDATE invites SET api_key_id = $2, user_id = $3, updated_at = NOW()
 WHERE id = $1;
 
 -- name: DeleteInvite :execrows

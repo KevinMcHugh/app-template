@@ -5,7 +5,9 @@
 {{define "content"}}
 <div class="panel" style="max-width:30rem;margin:3rem auto">
   <h1>Sign in</h1>
-  <p class="muted">Paste an api key. Mint one on the server with <code>server keys create --name you</code>.</p>
+  {{if .GoogleOn}}<p style="margin-top:1rem"><a class="btn" href="/auth/google?next={{.Next}}">Sign in with Google</a></p>
+  <p class="muted">Or paste an api key.</p>{{else}}
+  <p class="muted">Paste an api key. Mint one on the server with <code>server keys create --name you</code>.</p>{{end}}
   <form method="POST" action="/login" class="row" style="margin-top:1rem">
     <input type="password" name="api_key" autocomplete="off" autofocus aria-label="API key" style="flex:1">
     <input type="hidden" name="next" value="{{.Next}}">

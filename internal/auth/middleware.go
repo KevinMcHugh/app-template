@@ -15,28 +15,35 @@ import (
 // HttpOnly so page script never sees it.
 const SessionCookie = "app_session"
 
-// Resolve finds the api key a raw token acts as: an api key itself, or an
-// OAuth access token (or web session) one approved. It returns
-// pgx.ErrNoRows for a token that is unknown, expired, revoked, or whose key
-// was deleted.
-func Resolve(ctx context.Context, q *dbgen.Queries, token string) (string, error) {
+// Resolve finds who a raw token acts as: an api key itself, or an OAuth
+// access token (or web session) one approved, and the key's user. It
+// returns pgx.ErrNoRows for a token that is unknown, expired, revoked, or
+// whose key was deleted.
+func Resolve(ctx context.Context, q *dbgen.Queries, token string) (Caller, error) {
 	// The access-token prefix is the more specific, so it is checked first.
 	if strings.HasPrefix(token, AccessTokenPrefix) {
 		row, err := q.GetOAuthTokenByHash(ctx, Hash(token))
 		if err != nil {
-			return "", err
+			return Caller{}, err
 		}
-		return row.ApiKeyID, nil
+		return Caller{KeyID: row.ApiKeyID, UserID: deref(row.UserID)}, nil
 	}
 	if !strings.HasPrefix(token, KeyPrefix) {
-		return "", pgx.ErrNoRows
+		return Caller{}, pgx.ErrNoRows
 	}
 	row, err := q.GetAPIKeyByHash(ctx, Hash(token))
 	if err != nil {
-		return "", err
+		return Caller{}, err
 	}
 	_ = q.TouchAPIKey(ctx, row.ID) // best effort: a failed stamp must not fail the request
-	return row.ID, nil
+	return Caller{KeyID: row.ID, UserID: deref(row.UserID)}, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // TokenFrom is the request's credential: the Authorization bearer, else the
@@ -63,7 +70,7 @@ func Require(q *dbgen.Queries, deny http.HandlerFunc) func(http.Handler) http.Ha
 				deny(w, r)
 				return
 			}
-			keyID, err := Resolve(r.Context(), q, token)
+			caller, err := Resolve(r.Context(), q, token)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					deny(w, r)
@@ -72,7 +79,7 @@ func Require(q *dbgen.Queries, deny http.HandlerFunc) func(http.Handler) http.Ha
 				http.Error(w, "auth lookup failed", http.StatusInternalServerError)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(WithKey(r.Context(), keyID)))
+			next.ServeHTTP(w, r.WithContext(WithCaller(r.Context(), caller)))
 		})
 	}
 }
@@ -85,13 +92,13 @@ func Optional(q *dbgen.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if token := TokenFrom(r); token != "" {
-				keyID, err := Resolve(r.Context(), q, token)
+				caller, err := Resolve(r.Context(), q, token)
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					http.Error(w, "auth lookup failed", http.StatusInternalServerError)
 					return
 				}
 				if err == nil {
-					r = r.WithContext(WithKey(r.Context(), keyID))
+					r = r.WithContext(WithCaller(r.Context(), caller))
 				}
 			}
 			next.ServeHTTP(w, r)

@@ -23,7 +23,7 @@ paths:
   /me:
     get:
       operationId: getMe
-      summary: The api key this request acts as
+      summary: The api key this request acts as, and its user
       responses:
         "200":
           description: The caller
@@ -183,6 +183,20 @@ components:
         name:
           type: string
           description: The label the key was minted with.
+        user:
+          x-go-type-skip-optional-pointer: false
+          allOf:
+            - $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      description: The person a key belongs to. Missing for a key minted before there were users and never given one.
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
 
     Note:
       type: object
