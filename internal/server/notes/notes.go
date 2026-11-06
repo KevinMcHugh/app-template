@@ -97,7 +97,6 @@ type ListStore interface {
 
 // ListEndpoint is a page of the notes, newest first. It is public.
 type ListEndpoint struct {
-	Store ListStore
 	Links app.Links
 }
 
@@ -106,8 +105,8 @@ func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
 	return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}
 }
 
-func (e ListEndpoint) Interact(ctx context.Context, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
-	return e.Store.PageNotes(ctx, e.Page(req))
+func (e ListEndpoint) Interact(ctx context.Context, store ListStore, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
+	return store.PageNotes(ctx, e.Page(req))
 }
 
 func (e ListEndpoint) Build(p app.Page[dbgen.Note]) app.Page[Note] {
@@ -128,12 +127,11 @@ type GetStore interface {
 
 // GetEndpoint is one note. It is public.
 type GetEndpoint struct {
-	Store GetStore
 	Links app.Links
 }
 
-func (e GetEndpoint) Interact(ctx context.Context, req apigen.GetNoteRequestObject) (dbgen.Note, error) {
-	row, err := e.Store.GetNote(ctx, req.NoteId)
+func (e GetEndpoint) Interact(ctx context.Context, store GetStore, req apigen.GetNoteRequestObject) (dbgen.Note, error) {
+	row, err := store.GetNote(ctx, req.NoteId)
 	return row, app.NotFound(err, "note", req.NoteId)
 }
 
@@ -153,11 +151,10 @@ type CreateStore interface {
 
 // CreateEndpoint saves a new note, recording the api key that made it.
 type CreateEndpoint struct {
-	Store CreateStore
 	Links app.Links
 }
 
-func (e CreateEndpoint) Interact(ctx context.Context, req apigen.CreateNoteRequestObject) (dbgen.Note, error) {
+func (e CreateEndpoint) Interact(ctx context.Context, store CreateStore, req apigen.CreateNoteRequestObject) (dbgen.Note, error) {
 	title, err := cleanTitle(req.Body.Title)
 	if err != nil {
 		return dbgen.Note{}, err
@@ -166,7 +163,7 @@ func (e CreateEndpoint) Interact(ctx context.Context, req apigen.CreateNoteReque
 	if err != nil {
 		return dbgen.Note{}, err
 	}
-	return e.Store.CreateNote(ctx, dbgen.CreateNoteParams{
+	return store.CreateNote(ctx, dbgen.CreateNoteParams{
 		ID:        xid.New().String(),
 		Title:     title,
 		Body:      body,
@@ -194,11 +191,10 @@ type UpdateStore interface {
 // note, so a change over someone else's newer one is refused
 // (app.ErrConflict).
 type UpdateEndpoint struct {
-	Store UpdateStore
 	Links app.Links
 }
 
-func (e UpdateEndpoint) Interact(ctx context.Context, req apigen.UpdateNoteRequestObject) (dbgen.Note, error) {
+func (e UpdateEndpoint) Interact(ctx context.Context, store UpdateStore, req apigen.UpdateNoteRequestObject) (dbgen.Note, error) {
 	arg := dbgen.UpdateNoteParams{ID: req.NoteId}
 	if t := req.Body.Title; t != nil {
 		title, err := cleanTitle(*t)
@@ -215,7 +211,7 @@ func (e UpdateEndpoint) Interact(ctx context.Context, req apigen.UpdateNoteReque
 		arg.Body = &body
 	}
 	var row dbgen.Note
-	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+	err := store.InTx(ctx, func(q *dbgen.Queries) error {
 		if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
 			return err
 		}
@@ -246,10 +242,10 @@ type DeleteStore interface {
 }
 
 // DeleteEndpoint soft-deletes a note. Its view model is just "it happened".
-type DeleteEndpoint struct{ Store DeleteStore }
+type DeleteEndpoint struct{}
 
-func (e DeleteEndpoint) Interact(ctx context.Context, req apigen.DeleteNoteRequestObject) (bool, error) {
-	n, err := e.Store.DeleteNote(ctx, req.NoteId)
+func (e DeleteEndpoint) Interact(ctx context.Context, store DeleteStore, req apigen.DeleteNoteRequestObject) (bool, error) {
+	n, err := store.DeleteNote(ctx, req.NoteId)
 	if err != nil {
 		return false, err
 	}

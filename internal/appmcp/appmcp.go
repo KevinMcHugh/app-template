@@ -89,7 +89,7 @@ func registerRead(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "whoami",
 		Description: "The api key this connection acts as.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ Empty) (*mcpsdk.CallToolResult, MeOutput, error) {
-		vm, err := server.BuildViewModel(ctx, me.Endpoint{Store: store}, apigen.GetMeRequestObject{})
+		vm, err := server.BuildViewModel(ctx, me.Store(store), me.Endpoint{}, apigen.GetMeRequestObject{})
 		return nil, MeOutput{Me: vm}, err
 	})
 
@@ -97,7 +97,7 @@ func registerRead(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "list_notes",
 		Description: "List the notes, newest first, a page at a time.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in ListNotesInput) (*mcpsdk.CallToolResult, ListNotesOutput, error) {
-		vm, err := server.BuildViewModel(ctx, notes.ListEndpoint{Store: store, Links: links}, apigen.ListNotesRequestObject{
+		vm, err := server.BuildViewModel(ctx, notes.ListStore(store), notes.ListEndpoint{Links: links}, apigen.ListNotesRequestObject{
 			Params: apigen.ListNotesParams{Limit: in.Limit, After: in.After},
 		})
 		return nil, ListNotesOutput{Notes: vm.Items, Next: vm.Next}, err
@@ -107,7 +107,7 @@ func registerRead(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "get_note",
 		Description: "One note in full.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in NoteIDInput) (*mcpsdk.CallToolResult, NoteOutput, error) {
-		vm, err := server.BuildViewModel(ctx, notes.GetEndpoint{Store: store, Links: links}, apigen.GetNoteRequestObject{NoteId: in.ID})
+		vm, err := server.BuildViewModel(ctx, notes.GetStore(store), notes.GetEndpoint{Links: links}, apigen.GetNoteRequestObject{NoteId: in.ID})
 		return nil, NoteOutput{Note: vm}, err
 	})
 }
@@ -117,7 +117,7 @@ func registerWrite(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "create_note",
 		Description: "Save a new note.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in CreateNoteInput) (*mcpsdk.CallToolResult, NoteOutput, error) {
-		vm, err := server.BuildViewModel(ctx, notes.CreateEndpoint{Store: store, Links: links}, apigen.CreateNoteRequestObject{
+		vm, err := server.BuildViewModel(ctx, notes.CreateStore(store), notes.CreateEndpoint{Links: links}, apigen.CreateNoteRequestObject{
 			Body: &apigen.NoteCreate{Title: in.Title, Body: in.Body},
 		})
 		return nil, NoteOutput{Note: vm}, err
@@ -127,7 +127,7 @@ func registerWrite(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "update_note",
 		Description: "Change a note's title, body, or both. Fields left out stay as they are. Send the note's updatedAt as you last read it; if it has changed since, the update is refused and you should read the note again before retrying.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in UpdateNoteInput) (*mcpsdk.CallToolResult, NoteOutput, error) {
-		vm, err := server.BuildViewModel(ctx, notes.UpdateEndpoint{Store: store, Links: links}, apigen.UpdateNoteRequestObject{
+		vm, err := server.BuildViewModel(ctx, notes.UpdateStore(store), notes.UpdateEndpoint{Links: links}, apigen.UpdateNoteRequestObject{
 			NoteId: in.ID,
 			Body:   &apigen.NoteUpdate{Title: in.Title, Body: in.Body, UpdatedAt: in.UpdatedAt},
 		})
@@ -138,7 +138,7 @@ func registerWrite(s *mcpsdk.Server, store server.Store, links app.Links) {
 		Name:        "delete_note",
 		Description: "Delete a note. Confirm with the user first.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in NoteIDInput) (*mcpsdk.CallToolResult, OKOutput, error) {
-		ok, err := server.BuildViewModel(ctx, notes.DeleteEndpoint{Store: store}, apigen.DeleteNoteRequestObject{NoteId: in.ID})
+		ok, err := server.BuildViewModel(ctx, notes.DeleteStore(store), notes.DeleteEndpoint{}, apigen.DeleteNoteRequestObject{NoteId: in.ID})
 		return nil, OKOutput{OK: ok}, err
 	})
 }

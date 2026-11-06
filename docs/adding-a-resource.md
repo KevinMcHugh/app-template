@@ -84,11 +84,11 @@ The build now fails at `var _ apigen.StrictServerInterface = (*Server)(nil)` unt
 Create `internal/server/widgets/widgets.go`, using `notes/notes.go` as the model:
 
 - a view model `Widget` with JSON tags, `ToViewModel(dbgen.Widget, app.Links) Widget`, and an unexported `toAPI(Widget) apigen.Widget`;
-- for each operation, a narrow `Store` interface and an endpoint struct with `Interact`, `Build` and `Render`;
+- for each operation, a narrow store interface and an endpoint with `Interact(ctx, store TheStore, req)`, `Build` and `Render`. The store is `Interact`'s argument, never a field: the endpoint struct holds only what `Build` and `Render` need (`Links`), or nothing;
 - validation in `Interact`, returning `fmt.Errorf("%w: …", app.ErrBadInput)` or `app.NotFound(err, "widget", id)`;
 - `auth.KeyIDPtr(ctx)` for `created_by`;
 - on the update endpoint, a `Guard` method naming the row and the `updatedAt` the caller sent (`app.Guard{Kind: "widget", ID: req.WidgetId, Seen: req.Body.UpdatedAt}`), and `app.Claim(ctx, q, e.Guard(req))` first in the `InTx` that does the write; and a CTE and arm for the kind in `LockForWrite` (`db/queries/guard.sql`). See "Stale writes" in [architecture.md](architecture.md);
-- on the list endpoint, a `Page` method naming the list (`app.PageRequest{List: "widget", Limit: req.Params.Limit, After: req.Params.After}`), an `Interact` that returns `e.Store.PageWidgets(ctx, e.Page(req))` through its narrow `Store` interface, and `Build` and `Render` over the page with `app.MapPage`. See "Lists" in [architecture.md](architecture.md).
+- on the list endpoint, a `Page` method naming the list (`app.PageRequest{List: "widget", Limit: req.Params.Limit, After: req.Params.After}`), an `Interact` that returns `store.PageWidgets(ctx, e.Page(req))`, and `Build` and `Render` over the page with `app.MapPage`. See "Lists" in [architecture.md](architecture.md).
 
 If a view model links to a page, add a method to `app.Links`.
 
@@ -102,7 +102,7 @@ In `internal/server/server.go`, add one method per operation and map errors to t
 
 ```go
 func (s *Server) GetWidget(ctx context.Context, req apigen.GetWidgetRequestObject) (apigen.GetWidgetResponseObject, error) {
-	resp, err := Run(ctx, widgets.GetEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := Run(ctx, widgets.GetStore(s.store), widgets.GetEndpoint{Links: s.links}, req)
 	if isNotFound(err) {
 		return apigen.GetWidget404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil
 	}
@@ -110,11 +110,11 @@ func (s *Server) GetWidget(ctx context.Context, req apigen.GetWidgetRequestObjec
 }
 ```
 
-Check `req.Body == nil` in operations that take a body, and return the 400. A PATCH runs with `RunGuarded` instead of `Run`, and maps `isConflict(err)` to its 409 with `conflict(err)`. A list runs with `RunPaged`, and maps `isUnprocessable(err)` to its 422.
+Convert `s.store` to the endpoint's store interface as you pass it: that names, and the compiler checks, exactly what the endpoint may use. Check `req.Body == nil` in operations that take a body, and return the 400. A PATCH runs with `RunGuarded` instead of `Run`, and maps `isConflict(err)` to its 409 with `conflict(err)`. A list runs with `RunPaged`, and maps `isUnprocessable(err)` to its 422.
 
 ## 7. MCP tools
 
-If Claude should see it, add tools in `internal/appmcp/appmcp.go`: an input struct with `jsonschema` descriptions, an output struct wrapping the view model, and a handler that calls `server.BuildViewModel` with a request object it fills in. Keep tool descriptions specific about when to use the tool. An update tool takes a required `updatedAt` (a `time.Time`) and passes it into the request body, as `update_note` does. Say "confirm with the user first" on anything destructive, and update `Instructions` if the typical session changes.
+If Claude should see it, add tools in `internal/appmcp/appmcp.go`: an input struct with `jsonschema` descriptions, an output struct wrapping the view model, and a handler that calls `server.BuildViewModel(ctx, widgets.GetStore(store), widgets.GetEndpoint{Links: links}, req)` with a request object it fills in. Keep tool descriptions specific about when to use the tool. An update tool takes a required `updatedAt` (a `time.Time`) and passes it into the request body, as `update_note` does. Say "confirm with the user first" on anything destructive, and update `Instructions` if the typical session changes.
 
 ## 8. Pages
 

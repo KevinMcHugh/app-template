@@ -42,7 +42,7 @@ type LockStore interface {
 // the version the caller saw, and of two saves racing from one copy only
 // one gets past here. Call it first in the transaction that writes the row:
 //
-//	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+//	err := store.InTx(ctx, func(q *dbgen.Queries) error {
 //		if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
 //			return err
 //		}

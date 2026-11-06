@@ -24,7 +24,7 @@ To change something in a generated file, edit its source (the spec, a query or a
 
 `Endpoint[Req, M, VM, Res]` (in `internal/server/endpoint.go`):
 
-- `Interact(ctx, req) (M, error)` does the work through a narrow `Store` interface the endpoint declares itself, listing only the methods it calls. `*app.Store` satisfies them all.
+- `Interact(ctx, store S, req) (M, error)` does the work through the store it is handed: `S` is a narrow interface the endpoint declares itself, listing only the methods it calls, and `*app.Store` satisfies them all. The store is never a field of the endpoint, so `Interact` is the only step that touches data; the endpoint struct holds only what `Build` and `Render` need (`Links`). Callers convert their store to `S` as they pass it: `Run(ctx, notes.ListStore(s.store), notes.ListEndpoint{Links: s.links}, req)`.
 - `Build(M) VM` is a pure transformation to the view model, which carries JSON tags because MCP returns it as is.
 - `Render(VM) Res` wraps the view model in the generated response type.
 
