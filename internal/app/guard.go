@@ -19,7 +19,8 @@ var ErrConflict = errors.New("conflict")
 // Guard is a stale-write check: the row a write changes (a kind, as
 // Access names kinds, and an id) and its updatedAt as the caller last
 // loaded it. An endpoint that changes a stored row names its Guard
-// (server.Guarded), and the write is refused with ErrConflict unless the
+// (server.Guarded) and claims it (Claim) first thing in the transaction
+// that writes the row, and the write is refused with ErrConflict unless the
 // row is still as the caller saw it. That way two people editing the same
 // line cannot silently overwrite each other: the second to save is told,
 // and reloads.
@@ -29,42 +30,25 @@ type Guard struct {
 	Seen time.Time
 }
 
-// GuardState is a Guard on its way through one request: WithGuard puts it
-// on the context, and Store.InTx checks it at the start of the endpoint's
-// transaction, holding the row's lock until the write commits.
-type GuardState struct {
-	Guard   Guard
-	checked bool
-}
-
-// Checked reports whether a transaction checked the guard. server.Run
-// fails closed when it did not, since that means the write it guards ran
-// outside InTx with nothing comparing the versions.
-func (s *GuardState) Checked() bool { return s.checked }
-
-type guardKey struct{}
-
-// WithGuard puts g on ctx for the next InTx to check.
-func WithGuard(ctx context.Context, g Guard) (context.Context, *GuardState) {
-	s := &GuardState{Guard: g}
-	return context.WithValue(ctx, guardKey{}, s), s
-}
-
-// LockStore is what checking a guard reads.
+// LockStore is what claiming a guard reads: the transaction's queries.
 type LockStore interface {
 	LockForWrite(ctx context.Context, arg dbgen.LockForWriteParams) (pgtype.Timestamptz, error)
 }
 
-// checkGuard locks the guarded row for the rest of q's transaction and
-// compares its updatedAt with the one the caller saw. It runs once per
-// request, in the first InTx: a second transaction in the same request
-// would otherwise see the first one's write as someone else's.
-func checkGuard(ctx context.Context, q LockStore) error {
-	s, _ := ctx.Value(guardKey{}).(*GuardState)
-	if s == nil || s.checked {
-		return nil
-	}
-	g := s.Guard
+// Claim locks g's row for the rest of q's transaction and compares its
+// updatedAt with the one the caller saw: ErrConflict if someone saved
+// since, ErrBadInput if the caller sent none. The lock is held until the
+// transaction ends, so the write that follows in it is made over exactly
+// the version the caller saw, and of two saves racing from one copy only
+// one gets past here. Call it first in the transaction that writes the row:
+//
+//	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+//		if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
+//			return err
+//		}
+//		// the write, on q
+//	})
+func Claim(ctx context.Context, q LockStore, g Guard) error {
 	what := strings.ReplaceAll(g.Kind, "_", " ")
 	if g.Seen.IsZero() {
 		return fmt.Errorf("%w: updatedAt is required: send the %s's updatedAt as you last loaded it", ErrBadInput, what)
@@ -77,6 +61,28 @@ func checkGuard(ctx context.Context, q LockStore) error {
 		return fmt.Errorf("%w: someone else changed this %s at %s, after you loaded it; reload it, and make your change again",
 			ErrConflict, what, cur.Time.UTC().Format(time.RFC3339))
 	}
-	s.checked = true
+	if r, _ := ctx.Value(receiptKey{}).(*Receipt); r != nil && r.Guard == g {
+		r.claimed = true
+	}
 	return nil
+}
+
+// Receipt records whether the guard an endpoint declared was claimed.
+// server.Run asks for one (ExpectClaim) before a Guarded endpoint runs and
+// fails closed if it comes back unclaimed: that would mean the endpoint
+// wrote without comparing versions, or compared a different row's.
+type Receipt struct {
+	Guard   Guard
+	claimed bool
+}
+
+// Claimed reports whether Claim was called with the expected guard.
+func (r *Receipt) Claimed() bool { return r.claimed }
+
+type receiptKey struct{}
+
+// ExpectClaim puts a receipt for g on ctx, for Claim to sign.
+func ExpectClaim(ctx context.Context, g Guard) (context.Context, *Receipt) {
+	r := &Receipt{Guard: g}
+	return context.WithValue(ctx, receiptKey{}, r), r
 }

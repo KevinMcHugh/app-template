@@ -30,15 +30,22 @@ type Endpoint[Req, M, VM, Res any] interface {
 
 // Guarded is the extension an Endpoint implements when it changes a row a
 // caller has already loaded (every PATCH): Guard names that row and the
-// updatedAt the caller sent back. Run and BuildViewModel put the guard on
-// the context, and Store.InTx checks it at the start of the endpoint's
-// transaction, locking the row, so a write over someone else's newer save
-// is refused with app.ErrConflict (409) instead of silently replacing it.
-// The endpoint itself only has to name the guard and do its write in InTx:
+// updatedAt the caller sent back, and the endpoint claims it (app.Claim) on
+// the transaction that writes the row, which locks the row and refuses a
+// write over someone else's newer save with app.ErrConflict (409):
 //
 //	func (UpdateEndpoint) Guard(req apigen.UpdateNoteRequestObject) app.Guard {
 //		return app.Guard{Kind: "note", ID: req.NoteId, Seen: req.Body.UpdatedAt}
 //	}
+//
+//	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+//		if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
+//			return err
+//		}
+//		...
+//
+// Run and BuildViewModel check that it did: a guarded endpoint that
+// finishes without claiming its guard fails closed.
 type Guarded[Req any] interface {
 	Guard(req Req) app.Guard
 }
@@ -51,18 +58,18 @@ type GuardedEndpoint[Req, M, VM, Res any] interface {
 	Guarded[Req]
 }
 
-// guard puts e's guard on ctx, if it has one, and returns a check that it
-// was enforced. A guarded endpoint whose write never went through InTx
-// fails closed rather than quietly skipping the comparison.
+// guard expects e to claim its guard, if it has one, and returns a check
+// that it did. A guarded endpoint that wrote without claiming the guard it
+// declared fails closed rather than quietly skipping the comparison.
 func guard[Req any](ctx context.Context, e any, req Req) (context.Context, func() error) {
 	g, ok := e.(Guarded[Req])
 	if !ok {
 		return ctx, func() error { return nil }
 	}
-	ctx, s := app.WithGuard(ctx, g.Guard(req))
+	ctx, r := app.ExpectClaim(ctx, g.Guard(req))
 	return ctx, func() error {
-		if !s.Checked() {
-			return fmt.Errorf("server: %T is Guarded but never opened a transaction, so its guard went unchecked", e)
+		if !r.Claimed() {
+			return fmt.Errorf("server: %T is Guarded but never claimed its guard (app.Claim), so nothing compared the versions", e)
 		}
 		return nil
 	}
@@ -71,7 +78,8 @@ func guard[Req any](ctx context.Context, e any, req Req) (context.Context, func(
 // Paged is the extension a list endpoint implements: Page names the list
 // and reads the page the caller asked for (the limit and after query
 // parameters every list operation takes). The endpoint's model is that one
-// page, app.Page[Row], which its Interact gets from app.Paginate:
+// page, app.Page[Row], which its Interact asks its store for (a Page…
+// method of app.Pager, through the endpoint's narrow Store interface):
 //
 //	func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
 //		return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}

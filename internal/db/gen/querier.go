@@ -53,10 +53,10 @@ type Querier interface {
 	// locks in its own CTE, and only the one whose kind matches reads a row.
 	// A new kind that takes a guard gets a CTE here and an arm below.
 	LockForWrite(ctx context.Context, arg LockForWriteParams) (pgtype.Timestamptz, error)
-	// One page of the notes, newest first, after the (created_at, id) of the
-	// last note on the page before (app.Paginate). The sort ends in the id, so
-	// the key is unique per row.
-	PageNotes(ctx context.Context, arg PageNotesParams) ([]Note, error)
+	// The notes, newest first, after the (created_at, id) of the last note on
+	// the page before; app.Store.PageNotes pages them. The sort ends in the
+	// id, so the key is unique per row.
+	NotesAfter(ctx context.Context, arg NotesAfterParams) ([]Note, error)
 	PurgeExpiredSSOLoginIntents(ctx context.Context) error
 	RevokeOAuthToken(ctx context.Context, id string) error
 	RevokeOAuthTokenByHash(ctx context.Context, tokenHash string) error

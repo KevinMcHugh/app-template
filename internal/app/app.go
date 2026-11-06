@@ -87,21 +87,14 @@ func (s *Store) RedeemInvite(ctx context.Context, raw string, approve func(q *db
 	return tx.Commit(ctx)
 }
 
-// InTx runs fn on one transaction, committing only if it returns nil. If
-// ctx carries a Guard (WithGuard), it is checked first: see Guard.
+// InTx runs fn on one transaction, committing only if it returns nil.
 func (s *Store) InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
-	q := s.WithTx(tx)
-	// A request that carries a Guard checks it first, so the row stays
-	// locked, and as the caller saw it, until fn's write commits.
-	if err := checkGuard(ctx, q); err != nil {
-		return err
-	}
-	if err := fn(q); err != nil {
+	if err := fn(s.WithTx(tx)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

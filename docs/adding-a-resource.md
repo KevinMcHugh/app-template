@@ -41,8 +41,9 @@ INSERT INTO widgets (id, name, created_by) VALUES ($1, $2, $3) RETURNING *;
 SELECT * FROM widgets WHERE id = $1 AND deleted_at IS NULL;
 
 -- One page of the list, after the key of the last row on the page before
--- (app.Paginate). The sort ends in the id, so the key is unique per row.
--- name: PageWidgets :many
+-- (app.Store.PageWidgets pages it). The sort ends in the id, so the key is
+-- unique per row.
+-- name: WidgetsAfter :many
 SELECT * FROM widgets WHERE deleted_at IS NULL
   AND (sqlc.narg(after_id)::text IS NULL OR (created_at, id) < (sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::text))
 ORDER BY created_at DESC, id DESC
@@ -57,7 +58,7 @@ UPDATE widgets SET deleted_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 ```
 
-Every read and write filters `deleted_at IS NULL`. Flip the comparison in `PageWidgets` (`>` for an ascending sort, `<` for a descending one) to match its order. If other code needs every row at once, add a `ListWidgets` beside it with the same order.
+Every read and write filters `deleted_at IS NULL`. Flip the comparison in `WidgetsAfter` (`>` for an ascending sort, `<` for a descending one) to match its order. If other code needs every row at once, add a `ListWidgets` beside it with the same order.
 
 ## 3. Spec
 
@@ -86,12 +87,14 @@ Create `internal/server/widgets/widgets.go`, using `notes/notes.go` as the model
 - for each operation, a narrow `Store` interface and an endpoint struct with `Interact`, `Build` and `Render`;
 - validation in `Interact`, returning `fmt.Errorf("%w: …", app.ErrBadInput)` or `app.NotFound(err, "widget", id)`;
 - `auth.KeyIDPtr(ctx)` for `created_by`;
-- on the update endpoint, a `Guard` method naming the row and the `updatedAt` the caller sent (`app.Guard{Kind: "widget", ID: req.WidgetId, Seen: req.Body.UpdatedAt}`), with the write done in `InTx`, which checks it; and a CTE and arm for the kind in `LockForWrite` (`db/queries/guard.sql`). See "Stale writes" in [architecture.md](architecture.md);
-- on the list endpoint, a `Page` method naming the list (`app.PageRequest{List: "widget", Limit: req.Params.Limit, After: req.Params.After}`), an `Interact` that returns `app.Paginate` over `PageWidgets` with the row's sort key, and `Build` and `Render` over the page with `app.MapPage`. See "Lists" in [architecture.md](architecture.md).
+- on the update endpoint, a `Guard` method naming the row and the `updatedAt` the caller sent (`app.Guard{Kind: "widget", ID: req.WidgetId, Seen: req.Body.UpdatedAt}`), and `app.Claim(ctx, q, e.Guard(req))` first in the `InTx` that does the write; and a CTE and arm for the kind in `LockForWrite` (`db/queries/guard.sql`). See "Stale writes" in [architecture.md](architecture.md);
+- on the list endpoint, a `Page` method naming the list (`app.PageRequest{List: "widget", Limit: req.Params.Limit, After: req.Params.After}`), an `Interact` that returns `e.Store.PageWidgets(ctx, e.Page(req))` through its narrow `Store` interface, and `Build` and `Render` over the page with `app.MapPage`. See "Lists" in [architecture.md](architecture.md).
 
 If a view model links to a page, add a method to `app.Links`.
 
 If an operation needs a transaction, add a method to `app.Store` (see `RedeemInvite`) and to the `server.Store` interface.
+
+For the list, add `PageWidgets(ctx, …filters, p app.PageRequest) (app.Page[dbgen.Widget], error)` to `internal/app/pages.go` and to `app.Pager`: it runs `WidgetsAfter` through `app.Paginate` with the row's sort key, as `PageNotes` does.
 
 ## 6. Wire into the server
 
