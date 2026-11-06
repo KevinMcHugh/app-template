@@ -45,7 +45,6 @@ type Querier interface {
 	ListAPIKeys(ctx context.Context) ([]ApiKey, error)
 	// Unused, unexpired, undeleted invites.
 	ListActiveInvites(ctx context.Context) ([]Invite, error)
-	ListNotes(ctx context.Context) ([]Note, error)
 	ListUserIdentities(ctx context.Context, userID string) ([]UserIdentity, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	// LockForWrite locks the live row kind/id names until the transaction ends
@@ -54,6 +53,10 @@ type Querier interface {
 	// locks in its own CTE, and only the one whose kind matches reads a row.
 	// A new kind that takes a guard gets a CTE here and an arm below.
 	LockForWrite(ctx context.Context, arg LockForWriteParams) (pgtype.Timestamptz, error)
+	// One page of the notes, newest first, after the (created_at, id) of the
+	// last note on the page before (app.Paginate). The sort ends in the id, so
+	// the key is unique per row.
+	PageNotes(ctx context.Context, arg PageNotesParams) ([]Note, error)
 	PurgeExpiredSSOLoginIntents(ctx context.Context) error
 	RevokeOAuthToken(ctx context.Context, id string) error
 	RevokeOAuthTokenByHash(ctx context.Context, tokenHash string) error

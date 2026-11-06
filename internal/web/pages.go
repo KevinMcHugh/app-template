@@ -95,12 +95,16 @@ func redirect(w http.ResponseWriter, r *http.Request, path, msg string, isErr bo
 // ---- notes ------------------------------------------------------------------
 
 func (s *Server) indexPage(w http.ResponseWriter, r *http.Request) {
-	list, err := server.BuildViewModel(r.Context(), notes.ListEndpoint{Store: s.Store, Links: s.Links}, apigen.ListNotesRequestObject{})
+	// A page of notes; ?after= (from the Older notes link) is the next one.
+	after := r.URL.Query().Get("after")
+	page, err := server.BuildViewModel(r.Context(), notes.ListEndpoint{Store: s.Store, Links: s.Links}, apigen.ListNotesRequestObject{
+		Params: apigen.ListNotesParams{After: after},
+	})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "index", map[string]any{"Notes": list})
+	s.render(w, r, http.StatusOK, "index", map[string]any{"Notes": page.Items, "Next": page.Next, "Later": after != ""})
 }
 
 func (s *Server) notePage(w http.ResponseWriter, r *http.Request) {

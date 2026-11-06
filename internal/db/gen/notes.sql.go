@@ -7,6 +7,8 @@ package dbgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createNote = `-- name: CreateNote :one
@@ -75,14 +77,25 @@ func (q *Queries) GetNote(ctx context.Context, id string) (Note, error) {
 	return i, err
 }
 
-const listNotes = `-- name: ListNotes :many
+const pageNotes = `-- name: PageNotes :many
 SELECT id, title, body, created_by, created_at, updated_at, deleted_at FROM notes
 WHERE deleted_at IS NULL
-ORDER BY created_at DESC
+  AND ($1::text IS NULL OR (created_at, id) < ($2::timestamptz, $1::text))
+ORDER BY created_at DESC, id DESC
+LIMIT $3
 `
 
-func (q *Queries) ListNotes(ctx context.Context) ([]Note, error) {
-	rows, err := q.db.Query(ctx, listNotes)
+type PageNotesParams struct {
+	AfterID        *string            `json:"after_id"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	Lim            int32              `json:"lim"`
+}
+
+// One page of the notes, newest first, after the (created_at, id) of the
+// last note on the page before (app.Paginate). The sort ends in the id, so
+// the key is unique per row.
+func (q *Queries) PageNotes(ctx context.Context, arg PageNotesParams) ([]Note, error) {
+	rows, err := q.db.Query(ctx, pageNotes, arg.AfterID, arg.AfterCreatedAt, arg.Lim)
 	if err != nil {
 		return nil, err
 	}

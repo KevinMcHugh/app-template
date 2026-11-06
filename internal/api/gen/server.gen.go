@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -55,6 +56,8 @@ type NoteCreate struct {
 
 // NoteList defines model for NoteList.
 type NoteList struct {
+	// Next The cursor for the next page, to send as after; empty on the last page.
+	Next  string `json:"next"`
 	Notes []Note `json:"notes"`
 }
 
@@ -73,6 +76,12 @@ type User struct {
 	Name string `json:"name"`
 }
 
+// After defines model for After.
+type After = string
+
+// Limit defines model for Limit.
+type Limit = int
+
 // NoteId defines model for NoteId.
 type NoteId = string
 
@@ -88,6 +97,15 @@ type NotFound = Error
 // Unprocessable defines model for Unprocessable.
 type Unprocessable = Error
 
+// ListNotesParams defines parameters for ListNotes.
+type ListNotesParams struct {
+	// Limit How many to return, from 1 to 200; leave out for 100.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// After Where to start, the next cursor from the previous page; leave out for the first page.
+	After After `form:"after,omitempty" json:"after,omitempty"`
+}
+
 // CreateNoteJSONRequestBody defines body for CreateNote for application/json ContentType.
 type CreateNoteJSONRequestBody = NoteCreate
 
@@ -99,9 +117,9 @@ type ServerInterface interface {
 	// GetMe The api key this request acts as, and its user
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
-	// ListNotes List notes, newest first
+	// ListNotes List notes, newest first, a page at a time
 	// (GET /notes)
-	ListNotes(w http.ResponseWriter, r *http.Request)
+	ListNotes(w http.ResponseWriter, r *http.Request, params ListNotesParams)
 	// CreateNote Create a note
 	// (POST /notes)
 	CreateNote(w http.ResponseWriter, r *http.Request)
@@ -126,9 +144,9 @@ func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ListNotes List notes, newest first
+// ListNotes List notes, newest first, a page at a time
 // (GET /notes)
-func (_ Unimplemented) ListNotes(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) ListNotes(w http.ResponseWriter, r *http.Request, params ListNotesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -182,8 +200,40 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 // ListNotes operation middleware
 func (siw *ServerInterfaceWrapper) ListNotes(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListNotesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListNotes(w, r)
+		siw.Handler.ListNotes(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -463,6 +513,7 @@ func (response GetMe401TextResponse) VisitGetMeResponse(w http.ResponseWriter) e
 }
 
 type ListNotesRequestObject struct {
+	Params ListNotesParams
 }
 
 type ListNotesResponseObject interface {
@@ -479,6 +530,20 @@ func (response ListNotes200JSONResponse) VisitListNotesResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListNotes422JSONResponse struct{ UnprocessableJSONResponse }
+
+func (response ListNotes422JSONResponse) VisitListNotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -716,7 +781,7 @@ type StrictServerInterface interface {
 	// GetMe The api key this request acts as, and its user
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
-	// ListNotes List notes, newest first
+	// ListNotes List notes, newest first, a page at a time
 	// (GET /notes)
 	ListNotes(ctx context.Context, request ListNotesRequestObject) (ListNotesResponseObject, error)
 	// CreateNote Create a note
@@ -797,8 +862,10 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListNotes operation middleware
-func (sh *strictHandler) ListNotes(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) ListNotes(w http.ResponseWriter, r *http.Request, params ListNotesParams) {
 	var request ListNotesRequestObject
+
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.ListNotes(ctx, request.(ListNotesRequestObject))
@@ -941,32 +1008,35 @@ func (sh *strictHandler) UpdateNote(w http.ResponseWriter, r *http.Request, note
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -7,10 +7,15 @@ RETURNING *;
 SELECT * FROM notes
 WHERE id = $1 AND deleted_at IS NULL;
 
--- name: ListNotes :many
+-- One page of the notes, newest first, after the (created_at, id) of the
+-- last note on the page before (app.Paginate). The sort ends in the id, so
+-- the key is unique per row.
+-- name: PageNotes :many
 SELECT * FROM notes
 WHERE deleted_at IS NULL
-ORDER BY created_at DESC;
+  AND (sqlc.narg(after_id)::text IS NULL OR (created_at, id) < (sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::text))
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(lim);
 
 -- Sets whichever of title and body are given (non-null) and leaves the
 -- rest alone, so a PATCH can send one field.

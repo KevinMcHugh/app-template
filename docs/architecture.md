@@ -19,8 +19,8 @@ Every surface ends in the same `Endpoint`. REST runs all three steps (`server.Ru
 | package | holds |
 | --- | --- |
 | `cmd/server` | `main`: `serve`, plus the `keys` and `invites` admin commands |
-| `internal/app` | `Store` (every sqlc query plus `InTx` and hand-written transactions), `Guard` (the stale-write check `InTx` runs), `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`/`ErrConflict`, `Name` |
-| `internal/server` | `Endpoint`, `Run`, `BuildViewModel`; `Server`, which implements the generated `StrictServerInterface`, maps errors to typed responses, and mounts the API with the spec-driven auth guard |
+| `internal/app` | `Store` (every sqlc query plus `InTx` and hand-written transactions), `Guard` (the stale-write check `InTx` runs), `Paginate` and `Page` (keyset pages of a list), `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`/`ErrConflict`, `Name` |
+| `internal/server` | `Endpoint`, `Run`, `BuildViewModel`, and the `Guarded` and `Paged` extensions; `Server`, which implements the generated `StrictServerInterface`, maps errors to typed responses, and mounts the API with the spec-driven auth guard |
 | `internal/server/<resource>` | one `Endpoint` per operation, each with its own narrow `Store` interface, plus the resource's view model and its API conversion |
 | `internal/appmcp` | MCP tools and the server's `Instructions` |
 | `internal/web` | the router, page handlers and templates, and the end-to-end tests |
@@ -70,6 +70,38 @@ Three things keep it from being forgotten or skipped:
 - `TestEveryPatchIsGuarded` checks the spec: every PATCH body requires `updatedAt`, and every PATCH declares the 409.
 
 The check runs once per request, in the first `InTx`; a second transaction in the same request would otherwise take the first one's write for someone else's. Deletes are not guarded.
+
+### Lists: `Paged`
+
+Every list operation returns a page: it takes `limit` (1 to 200, 100 if left out) and `after` (the `next` of the page before), and its body carries `next`, empty on the last page. Pages are keyset, not offset: a list's query orders by a key that is unique per row (its sort columns, ending in the id) and starts after the key of the last row the caller saw, so a page is as cheap at the end of a list as at the start, and a row added or deleted while someone pages neither repeats nor skips the rows around it.
+
+A list endpoint implements one more method beside the three, naming its list and reading the page off the request, and its model is that one page:
+
+```go
+type Paged[Req any] interface {
+	Page(req Req) app.PageRequest // the list's name, and the limit and after the caller sent
+}
+
+func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
+	return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}
+}
+
+func (e ListEndpoint) Interact(ctx context.Context, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
+	return app.Paginate(e.Page(req),
+		func(after *newest, limit int32) ([]dbgen.Note, error) { /* PageNotes, after the key */ },
+		func(n dbgen.Note) newest { return newest{n.CreatedAt.Time, n.ID} })
+}
+```
+
+`app.Paginate` does the rest: it checks the limit, decodes the cursor (refusing one from another list, or one that is not a cursor, with `ErrBadInput`), asks the query for one row more than the page so it knows whether there is a next page without counting, and encodes the last row's key as `next`. `Build` and `Render` map the page with `app.MapPage`. The cursor is the key in base64 JSON with the list's name: opaque to callers, and a position, not a permission, since the query still filters to what the caller may see. If the resource has members, call `Access` before `Paginate`, so a non-member with a bad limit still gets a 404.
+
+Every surface pages: the API by `limit` and `after`, `list_notes` by the same arguments (and the server's instructions tell Claude to follow `next`), and the index page by an Older notes link that carries `after`. Code that needs a whole list follows `next` with `server.All`, or keeps a `List…` query of every row beside the `Page…` one.
+
+Three things keep a list from going unpaged:
+
+- `server.go` runs every list through `RunPaged`, which takes a `PagedEndpoint` (a `Paged` endpoint whose model is an `app.Page`), so a list endpoint that returns a slice does not compile.
+- `Run` fails closed if a paged endpoint returned more than the caller asked for (`TestOverlongPageFailsClosed`).
+- `TestEveryListIsPaged` checks the spec: every `list…` operation takes `limit` and `after`, its body requires `next`, and it declares the 422.
 
 ## Conventions
 

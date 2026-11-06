@@ -1,7 +1,6 @@
 {{define "title"}}Notes · {{.AppName}}{{end}}
 {{define "content"}}
 <h1>Notes</h1>
-<p class="muted">{{len .Notes}} note{{if ne (len .Notes) 1}}s{{end}}.</p>
 {{if .SignedIn}}
 <details class="panel"{{if not .Notes}} open{{end}}>
   <summary>New note</summary>
@@ -12,7 +11,7 @@
   </form>
 </details>
 {{end}}
-{{if not .Notes}}
+{{if and (not .Notes) (not .Later)}}
 <div class="panel"><p>No notes yet.{{if not .SignedIn}} <a href="/login?next=/">Sign in</a> to add one, or ask Claude over MCP.{{end}}</p></div>
 {{end}}
 <div class="list">
@@ -27,4 +26,10 @@
   </article>
 {{end}}
 </div>
+{{if or .Next .Later}}
+<p class="row">
+  {{if .Later}}<a href="/">← Newest notes</a>{{end}}
+  {{if .Next}}<a href="/?after={{.Next}}">Older notes →</a>{{end}}
+</p>
+{{end}}
 {{end}}

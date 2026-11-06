@@ -28,7 +28,7 @@ type fakeStore struct {
 	note dbgen.Note
 }
 
-func (f fakeStore) ListNotes(context.Context) ([]dbgen.Note, error) {
+func (f fakeStore) PageNotes(context.Context, dbgen.PageNotesParams) ([]dbgen.Note, error) {
 	return []dbgen.Note{f.note}, nil
 }
 
@@ -153,5 +153,65 @@ func TestUncheckedGuardFailsClosed(t *testing.T) {
 	}
 	if got, err := server.Run(ctx, unguarded{}, "req"); err != nil || got != "wrote" {
 		t.Fatalf("an unguarded endpoint: %q, %v", got, err)
+	}
+}
+
+// TestEveryListIsPaged checks the pagination contract on every list
+// operation, including ones added after this test was: it takes limit and
+// after, its body carries the next cursor, and it declares the 422 it gets
+// for a bad limit or cursor. Server's handlers run them with RunPaged, so
+// the endpoint behind each one has to page to compile.
+func TestEveryListIsPaged(t *testing.T) {
+	spec, err := apigen.GetSwagger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for path, item := range spec.Paths.Map() {
+		op := item.Get
+		if op == nil || !strings.HasPrefix(op.OperationID, "List") {
+			continue
+		}
+		n++
+		for _, name := range []string{"limit", "after"} {
+			if op.Parameters.GetByInAndName("query", name) == nil {
+				t.Errorf("GET %s: no %s parameter", path, name)
+			}
+		}
+		body := op.Responses.Status(http.StatusOK).Value.Content.Get("application/json").Schema.Value
+		if !slices.Contains(body.Required, "next") {
+			t.Errorf("GET %s: the body has no next", path)
+		}
+		if op.Responses.Status(http.StatusUnprocessableEntity) == nil {
+			t.Errorf("GET %s: no 422 response", path)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no list operations in the spec")
+	}
+}
+
+// overlong is a Paged endpoint that ignores the limit it was asked for.
+type overlong struct{}
+
+func (overlong) Interact(context.Context, int) (app.Page[int], error) {
+	return app.Page[int]{Items: []int{1, 2, 3}}, nil
+}
+func (overlong) Build(p app.Page[int]) app.Page[int] { return p }
+func (overlong) Render(p app.Page[int]) int          { return p.Len() }
+func (overlong) Page(limit int) app.PageRequest      { return app.PageRequest{List: "n", Limit: limit} }
+
+// A list endpoint that returns more than the caller asked for fails closed
+// on every surface, rather than handing back a large list whole.
+func TestOverlongPageFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	if _, err := server.RunPaged(ctx, overlong{}, 2); err == nil {
+		t.Fatal("Run passed a page of 3 for a limit of 2")
+	}
+	if _, err := server.BuildViewModel(ctx, overlong{}, 2); err == nil {
+		t.Fatal("BuildViewModel passed a page of 3 for a limit of 2")
+	}
+	if n, err := server.RunPaged(ctx, overlong{}, 3); err != nil || n != 3 {
+		t.Fatalf("a page within its limit: %d, %v", n, err)
 	}
 }
