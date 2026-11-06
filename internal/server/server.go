@@ -25,9 +25,9 @@ const BaseURL = "/api"
 // an endpoint needs a transaction that app.Store implements by hand.
 type Store interface {
 	dbgen.Querier
-	// InTx runs a write on one transaction, checking the request's Guard
-	// first (app.Store.InTx).
+	// InTx runs a write on one transaction.
 	InTx(ctx context.Context, fn func(q *dbgen.Queries) error) error
+	app.Pager
 }
 
 // Server implements apigen.StrictServerInterface by composing per-resource

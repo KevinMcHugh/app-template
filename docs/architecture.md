@@ -19,7 +19,7 @@ Every surface ends in the same `Endpoint`. REST runs all three steps (`server.Ru
 | package | holds |
 | --- | --- |
 | `cmd/server` | `main`: `serve`, plus the `keys` and `invites` admin commands |
-| `internal/app` | `Store` (every sqlc query plus `InTx` and hand-written transactions), `Guard` (the stale-write check `InTx` runs), `Paginate` and `Page` (keyset pages of a list), `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`/`ErrConflict`, `Name` |
+| `internal/app` | `Store` (every sqlc query plus `InTx` and hand-written transactions), `Guard` and `Claim` (the stale-write check), the `Page…` lists (`Pager`) with `Paginate` and `Page` beneath them, `Links` (absolute URLs for view models), `ErrNotFound`/`ErrBadInput`/`ErrConflict`, `Name` |
 | `internal/server` | `Endpoint`, `Run`, `BuildViewModel`, and the `Guarded` and `Paged` extensions; `Server`, which implements the generated `StrictServerInterface`, maps errors to typed responses, and mounts the API with the spec-driven auth guard |
 | `internal/server/<resource>` | one `Endpoint` per operation, each with its own narrow `Store` interface, plus the resource's view model and its API conversion |
 | `internal/appmcp` | MCP tools and the server's `Instructions` |
@@ -47,7 +47,7 @@ type Endpoint[Req, M, VM, Res any] interface {
 
 When two people (or a person and their Claude) have the same note open, the second save would silently replace the first. So every PATCH takes the `updatedAt` of the thing as the caller last loaded it, and is refused with a 409 if it has changed since. The caller reloads, sees the other change, and makes theirs again.
 
-An endpoint opts in by implementing one more method beside the three above:
+An endpoint opts in by implementing one more method beside the three above, and claiming that guard on the transaction that writes the row:
 
 ```go
 type Guarded[Req any] interface {
@@ -57,29 +57,40 @@ type Guarded[Req any] interface {
 func (UpdateEndpoint) Guard(req apigen.UpdateNoteRequestObject) app.Guard {
 	return app.Guard{Kind: "note", ID: req.NoteId, Seen: req.Body.UpdatedAt}
 }
+
+err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+	if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
+		return err
+	}
+	// the write, on q
+})
 ```
 
-and doing its write in `InTx`. `Run` and `BuildViewModel` put the guard on the context, and `Store.InTx` checks it first thing in the transaction: it locks the row (`LockForWrite`, in `db/queries/guard.sql`, `SELECT … FOR UPDATE`), compares its `updated_at` with what the caller saw, and returns `app.ErrConflict` if they differ, or `app.ErrBadInput` if the caller sent none. The lock is held until the write commits, so two saves racing from the same copy cannot both pass; exactly one lands. Because the check is inside `InTx`, it comes after validation, so a bad field is still a 422.
+`app.Claim` works on the transaction's queries, the endpoint's injected dependency like any other: it locks the row (`LockForWrite`, in `db/queries/guard.sql`, `SELECT … FOR UPDATE`), compares its `updated_at` with what the caller saw, and returns `app.ErrConflict` if they differ, or `app.ErrBadInput` if the caller sent none. The lock is held until the transaction commits, so two saves racing from the same copy cannot both pass; exactly one lands. The endpoint claims after validation, so a bad field is still a 422.
 
 Every surface sends the version back: API clients in the PATCH body, the note page in a hidden `updated_at` field on its edit form (a stale save redirects back with a message), and the `update_note` tool as a required `updatedAt` argument (a stale one is a tool error telling Claude to read the note again).
 
 Three things keep it from being forgotten or skipped:
 
 - `server.go` runs every PATCH through `RunGuarded`, which takes a `GuardedEndpoint`, so an update endpoint without `Guard` does not compile.
-- `Run` fails closed if a guarded endpoint finished without opening a transaction, because then nothing compared the versions (`TestUncheckedGuardFailsClosed`).
+- `Run` and `BuildViewModel` hand the endpoint a receipt for the guard it declared (`app.ExpectClaim`, on the context), which `Claim` signs. A guarded endpoint that finishes without claiming that guard fails closed, because nothing compared the versions (`TestUncheckedGuardFailsClosed`). The receipt is only a check: the comparison itself is the explicit `Claim` call.
 - `TestEveryPatchIsGuarded` checks the spec: every PATCH body requires `updatedAt`, and every PATCH declares the 409.
 
-The check runs once per request, in the first `InTx`; a second transaction in the same request would otherwise take the first one's write for someone else's. Deletes are not guarded.
+Claim once, in the transaction that writes the row; a second transaction in the same request would otherwise take the first one's write for someone else's. Deletes are not guarded.
 
 ### Lists: `Paged`
 
 Every list operation returns a page: it takes `limit` (1 to 200, 100 if left out) and `after` (the `next` of the page before), and its body carries `next`, empty on the last page. Pages are keyset, not offset: a list's query orders by a key that is unique per row (its sort columns, ending in the id) and starts after the key of the last row the caller saw, so a page is as cheap at the end of a list as at the start, and a row added or deleted while someone pages neither repeats nor skips the rows around it.
 
-A list endpoint implements one more method beside the three, naming its list and reading the page off the request, and its model is that one page:
+A list endpoint implements one more method beside the three, naming its list and reading the page off the request. Its model is that one page, which it asks its store for, through its narrow `Store` interface like any other read:
 
 ```go
 type Paged[Req any] interface {
 	Page(req Req) app.PageRequest // the list's name, and the limit and after the caller sent
+}
+
+type ListStore interface {
+	PageNotes(ctx context.Context, p app.PageRequest) (app.Page[dbgen.Note], error)
 }
 
 func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
@@ -87,15 +98,13 @@ func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
 }
 
 func (e ListEndpoint) Interact(ctx context.Context, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
-	return app.Paginate(e.Page(req),
-		func(after *newest, limit int32) ([]dbgen.Note, error) { /* PageNotes, after the key */ },
-		func(n dbgen.Note) newest { return newest{n.CreatedAt.Time, n.ID} })
+	return e.Store.PageNotes(ctx, e.Page(req))
 }
 ```
 
-`app.Paginate` does the rest: it checks the limit, decodes the cursor (refusing one from another list, or one that is not a cursor, with `ErrBadInput`), asks the query for one row more than the page so it knows whether there is a next page without counting, and encodes the last row's key as `next`. `Build` and `Render` map the page with `app.MapPage`. The cursor is the key in base64 JSON with the list's name: opaque to callers, and a position, not a permission, since the query still filters to what the caller may see. If the resource has members, call `Access` before `Paginate`, so a non-member with a bad limit still gets a 404.
+The paging is the store's business, in `internal/app/pages.go`: each `Page…` method (`app.Pager` lists them) runs its keyset query (`NotesAfter`) with its sort key through `app.Paginate`, so an endpoint knows nothing of keys or cursors, and a fake store returns a page outright. `app.Paginate` checks the limit, decodes the cursor (refusing one from another list, or one that is not a cursor, with `ErrBadInput`), asks the query for one row more than the page so it knows whether there is a next page without counting, and encodes the last row's key as `next`. `Build` and `Render` map the page with `app.MapPage`. The cursor is the key in base64 JSON with the list's name: opaque to callers, and a position, not a permission, since the query still filters to what the caller may see. If the resource has members, call `Access` before asking for the page, so a non-member with a bad limit still gets a 404.
 
-Every surface pages: the API by `limit` and `after`, `list_notes` by the same arguments (and the server's instructions tell Claude to follow `next`), and the index page by an Older notes link that carries `after`. Code that needs a whole list follows `next` with `server.All`, or keeps a `List…` query of every row beside the `Page…` one.
+Every surface pages: the API by `limit` and `after`, `list_notes` by the same arguments (and the server's instructions tell Claude to follow `next`), and the index page by an Older notes link that carries `after`. Code that needs a whole list follows `next` with `server.All`, or keeps a `List…` query of every row beside the `…After` one.
 
 Three things keep a list from going unpaged:
 

@@ -30,9 +30,9 @@ To change something in a generated file, edit its source (the spec, a query or a
 
 Endpoints return `app.ErrNotFound` or `app.ErrBadInput` (wrapped with `%w` and a message). `internal/server/server.go` maps them to the spec's 404 and 422, the pages map them to the same statuses, and MCP returns them as tool errors.
 
-Every PATCH is guarded against stale writes: the body requires the `updatedAt` the caller loaded, the endpoint implements `Guard(req) app.Guard` (`server.Guarded`), `server.go` runs it with `RunGuarded` and maps `app.ErrConflict` to 409, and the write happens in `InTx`, which locks the row and compares. Pages send it from a hidden form field and MCP update tools take it as an argument. See "Stale writes" in @docs/architecture.md.
+Every PATCH is guarded against stale writes: the body requires the `updatedAt` the caller loaded, the endpoint implements `Guard(req) app.Guard` (`server.Guarded`), `server.go` runs it with `RunGuarded` and maps `app.ErrConflict` to 409, and the endpoint calls `app.Claim(ctx, q, e.Guard(req))` first in the `InTx` that writes the row, which locks it and compares; `Run` fails closed if it never claimed. Pages send it from a hidden form field and MCP update tools take it as an argument. See "Stale writes" in @docs/architecture.md.
 
-Every list is paged: it takes `limit` (default 100, at most 200) and `after`, and returns `next`. The endpoint implements `Page(req) app.PageRequest` (`server.Paged`), returns `app.Paginate` over a keyset `Page…` query, and `server.go` runs it with `RunPaged`. MCP list tools take `limit` and `after`, and pages link to the next page with `?after=`. See "Lists" in @docs/architecture.md.
+Every list is paged: it takes `limit` (default 100, at most 200) and `after`, and returns `next`. The endpoint implements `Page(req) app.PageRequest` (`server.Paged`), returns its store's `Page…` method (in `internal/app/pages.go`, which runs a keyset `…After` query through `app.Paginate`), and `server.go` runs it with `RunPaged`. MCP list tools take `limit` and `after`, and pages link to the next page with `?after=`. See "Lists" in @docs/architecture.md.
 
 ## Adding a resource
 

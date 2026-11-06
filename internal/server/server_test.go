@@ -28,8 +28,8 @@ type fakeStore struct {
 	note dbgen.Note
 }
 
-func (f fakeStore) PageNotes(context.Context, dbgen.PageNotesParams) ([]dbgen.Note, error) {
-	return []dbgen.Note{f.note}, nil
+func (f fakeStore) PageNotes(context.Context, app.PageRequest) (app.Page[dbgen.Note], error) {
+	return app.Page[dbgen.Note]{Items: []dbgen.Note{f.note}}, nil
 }
 
 func (f fakeStore) GetNote(_ context.Context, id string) (dbgen.Note, error) {

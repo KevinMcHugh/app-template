@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/xid"
 
 	apigen "github.com/KevinMcHugh/app-template/internal/api/gen"
@@ -93,7 +92,7 @@ func cleanBody(s string) (string, error) {
 // -----------------------------------------------------------------------------
 
 type ListStore interface {
-	PageNotes(ctx context.Context, arg dbgen.PageNotesParams) ([]dbgen.Note, error)
+	PageNotes(ctx context.Context, p app.PageRequest) (app.Page[dbgen.Note], error)
 }
 
 // ListEndpoint is a page of the notes, newest first. It is public.
@@ -107,22 +106,8 @@ func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
 	return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}
 }
 
-// newest is where a page of a list sorted newest first starts.
-type newest struct {
-	CreatedAt time.Time
-	ID        string
-}
-
 func (e ListEndpoint) Interact(ctx context.Context, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
-	return app.Paginate(e.Page(req),
-		func(after *newest, limit int32) ([]dbgen.Note, error) {
-			arg := dbgen.PageNotesParams{Lim: limit}
-			if after != nil {
-				arg.AfterCreatedAt, arg.AfterID = pgtype.Timestamptz{Time: after.CreatedAt, Valid: true}, &after.ID
-			}
-			return e.Store.PageNotes(ctx, arg)
-		},
-		func(n dbgen.Note) newest { return newest{n.CreatedAt.Time, n.ID} })
+	return e.Store.PageNotes(ctx, e.Page(req))
 }
 
 func (e ListEndpoint) Build(p app.Page[dbgen.Note]) app.Page[Note] {
@@ -205,8 +190,9 @@ type UpdateStore interface {
 
 // UpdateEndpoint changes a note's title, body, or both; a field left nil is
 // left alone. It is Guarded: the caller sends back the updatedAt it loaded,
-// and a change over someone else's newer one is refused (app.ErrConflict).
-// The write happens in InTx, which checks the guard.
+// and the endpoint claims it (app.Claim) on the transaction that writes the
+// note, so a change over someone else's newer one is refused
+// (app.ErrConflict).
 type UpdateEndpoint struct {
 	Store UpdateStore
 	Links app.Links
@@ -230,6 +216,9 @@ func (e UpdateEndpoint) Interact(ctx context.Context, req apigen.UpdateNoteReque
 	}
 	var row dbgen.Note
 	err := e.Store.InTx(ctx, func(q *dbgen.Queries) error {
+		if err := app.Claim(ctx, q, e.Guard(req)); err != nil {
+			return err
+		}
 		var err error
 		row, err = q.UpdateNote(ctx, arg)
 		return app.NotFound(err, "note", req.NoteId)
