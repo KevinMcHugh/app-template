@@ -547,11 +547,26 @@ func TestMCPTools(t *testing.T) {
 	if err != nil || !res.IsError {
 		t.Fatalf("a stale update_note should be a tool error: %v %+v", err, res)
 	}
-	var list struct{ Notes []notes.Note }
+	var second struct{ Note notes.Note }
+	call("create_note", map[string]any{"title": "Second"}, &second)
+	var list struct {
+		Notes []notes.Note
+		Next  string
+	}
 	call("list_notes", nil, &list)
-	if len(list.Notes) != 1 {
+	if len(list.Notes) != 2 || list.Next != "" {
 		t.Fatalf("list_notes: %+v", list)
 	}
+	// A page at a time: the newest, then the one before it.
+	call("list_notes", map[string]any{"limit": 1}, &list)
+	if len(list.Notes) != 1 || list.Notes[0].ID != second.Note.ID || list.Next == "" {
+		t.Fatalf("list_notes, a page of 1: %+v", list)
+	}
+	call("list_notes", map[string]any{"limit": 1, "after": list.Next}, &list)
+	if len(list.Notes) != 1 || list.Notes[0].ID != created.Note.ID || list.Next != "" {
+		t.Fatalf("list_notes, the last page: %+v", list)
+	}
+	call("delete_note", map[string]any{"id": second.Note.ID}, &struct{ OK bool }{})
 	var ok struct{ OK bool }
 	call("delete_note", map[string]any{"id": created.Note.ID}, &ok)
 
@@ -568,5 +583,78 @@ func TestMCPTools(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
 		t.Fatalf("anonymous MCP: %d", resp.StatusCode)
+	}
+}
+
+// TestPagination walks the notes a page at a time over the API and the
+// pages, and checks the pages add up to the whole list, newest first, with
+// nothing twice; and that a bad limit or cursor is refused.
+func TestPagination(t *testing.T) {
+	e := newEnv(t)
+	for i := range 5 {
+		e.do("POST", "/api/notes", e.key, map[string]any{"title": fmt.Sprint("Note ", i)}, http.StatusCreated, nil)
+	}
+	type page struct {
+		Notes []notes.Note
+		Next  string
+	}
+	var whole page
+	e.do("GET", "/api/notes?limit=200", "", nil, http.StatusOK, &whole)
+	if len(whole.Notes) != 5 || whole.Next != "" || whole.Notes[0].Title != "Note 4" {
+		t.Fatalf("one page: %+v", whole)
+	}
+	var paged []notes.Note
+	after := ""
+	for range 5 {
+		var p page
+		e.do("GET", "/api/notes?limit=2&after="+url.QueryEscape(after), "", nil, http.StatusOK, &p)
+		if len(p.Notes) > 2 {
+			t.Fatalf("a page of %d for a limit of 2", len(p.Notes))
+		}
+		paged = append(paged, p.Notes...)
+		if p.Next == "" {
+			break
+		}
+		after = p.Next
+	}
+	if len(paged) != len(whole.Notes) {
+		t.Fatalf("paged %d notes, want %d", len(paged), len(whole.Notes))
+	}
+	for i := range paged {
+		if paged[i].ID != whole.Notes[i].ID {
+			t.Fatalf("page order differs at %d: %s, want %s", i, paged[i].ID, whole.Notes[i].ID)
+		}
+	}
+	e.do("GET", "/api/notes?limit=201", "", nil, http.StatusUnprocessableEntity, nil)
+	e.do("GET", "/api/notes?after=nope", "", nil, http.StatusUnprocessableEntity, nil)
+
+	// The index page shows the first page, with a link to the older notes
+	// that follows the same cursor.
+	var first page
+	e.do("GET", "/api/notes", "", nil, http.StatusOK, &first)
+	if first.Next != "" {
+		t.Fatalf("five notes fit on the default page: %+v", first)
+	}
+	for i := 5; i < 105; i++ {
+		e.do("POST", "/api/notes", e.key, map[string]any{"title": fmt.Sprint("Note ", i)}, http.StatusCreated, nil)
+	}
+	get := func(path string) string {
+		t.Helper()
+		resp, err := e.client.Get(e.url + path)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: %v %v", path, resp.StatusCode, err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return string(b)
+	}
+	index := get("/")
+	m := regexp.MustCompile(`href="/\?after=([^"]+)">Older notes`).FindStringSubmatch(index)
+	if m == nil || !strings.Contains(index, "Note 104") || strings.Contains(index, ">Note 4<") {
+		t.Fatal("the index page should show the newest 100 notes and link to the older ones")
+	}
+	older := get("/?after=" + html.UnescapeString(m[1]))
+	if !strings.Contains(older, ">Note 4<") || !strings.Contains(older, "Newest notes") || strings.Contains(older, "Older notes") {
+		t.Fatal("the older page should show the oldest notes and link back")
 	}
 }

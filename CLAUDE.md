@@ -32,6 +32,8 @@ Endpoints return `app.ErrNotFound` or `app.ErrBadInput` (wrapped with `%w` and a
 
 Every PATCH is guarded against stale writes: the body requires the `updatedAt` the caller loaded, the endpoint implements `Guard(req) app.Guard` (`server.Guarded`), `server.go` runs it with `RunGuarded` and maps `app.ErrConflict` to 409, and the write happens in `InTx`, which locks the row and compares. Pages send it from a hidden form field and MCP update tools take it as an argument. See "Stale writes" in @docs/architecture.md.
 
+Every list is paged: it takes `limit` (default 100, at most 200) and `after`, and returns `next`. The endpoint implements `Page(req) app.PageRequest` (`server.Paged`), returns `app.Paginate` over a keyset `Page…` query, and `server.go` runs it with `RunPaged`. MCP list tools take `limit` and `after`, and pages link to the next page with `?after=`. See "Lists" in @docs/architecture.md.
+
 ## Adding a resource
 
 Follow @docs/adding-a-resource.md. In short: migration → queries → spec → `make generate` → `internal/server/<resource>/` → wire into `server.go` → MCP tools in `internal/appmcp` → pages in `internal/web` → a case in `e2e_test.go`.

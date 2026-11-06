@@ -37,8 +37,11 @@ paths:
   /notes:
     get:
       operationId: listNotes
-      summary: List notes, newest first
+      summary: List notes, newest first, a page at a time
       security: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
       responses:
         "200":
           description: The notes
@@ -46,6 +49,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NoteList"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
     post:
       operationId: createNote
       summary: Create a note
@@ -135,6 +140,18 @@ components:
       description: The web session set by /login.
 
   parameters:
+    Limit:
+      name: limit
+      in: query
+      description: How many to return, from 1 to 200; leave out for 100.
+      schema:
+        type: integer
+    After:
+      name: after
+      in: query
+      description: Where to start, the next cursor from the previous page; leave out for the first page.
+      schema:
+        type: string
     NoteId:
       name: noteId
       in: path
@@ -228,8 +245,11 @@ components:
 
     NoteList:
       type: object
-      required: [notes]
+      required: [notes, next]
       properties:
+        next:
+          type: string
+          description: The cursor for the next page, to send as after; empty on the last page.
         notes:
           type: array
           items:

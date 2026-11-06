@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/xid"
 
 	apigen "github.com/KevinMcHugh/app-template/internal/api/gen"
@@ -92,33 +93,44 @@ func cleanBody(s string) (string, error) {
 // -----------------------------------------------------------------------------
 
 type ListStore interface {
-	ListNotes(ctx context.Context) ([]dbgen.Note, error)
+	PageNotes(ctx context.Context, arg dbgen.PageNotesParams) ([]dbgen.Note, error)
 }
 
-// ListEndpoint is every note, newest first. It is public.
+// ListEndpoint is a page of the notes, newest first. It is public.
 type ListEndpoint struct {
 	Store ListStore
 	Links app.Links
 }
 
-func (e ListEndpoint) Interact(ctx context.Context, _ apigen.ListNotesRequestObject) ([]dbgen.Note, error) {
-	return e.Store.ListNotes(ctx)
+// Page is the page the caller asked for.
+func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
+	return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}
 }
 
-func (e ListEndpoint) Build(rows []dbgen.Note) []Note {
-	out := make([]Note, len(rows))
-	for i, r := range rows {
-		out[i] = ToViewModel(r, e.Links)
-	}
-	return out
+// newest is where a page of a list sorted newest first starts.
+type newest struct {
+	CreatedAt time.Time
+	ID        string
 }
 
-func (e ListEndpoint) Render(vms []Note) apigen.ListNotesResponseObject {
-	out := make([]apigen.Note, len(vms))
-	for i, n := range vms {
-		out[i] = toAPI(n)
-	}
-	return apigen.ListNotes200JSONResponse{Notes: out}
+func (e ListEndpoint) Interact(ctx context.Context, req apigen.ListNotesRequestObject) (app.Page[dbgen.Note], error) {
+	return app.Paginate(e.Page(req),
+		func(after *newest, limit int32) ([]dbgen.Note, error) {
+			arg := dbgen.PageNotesParams{Lim: limit}
+			if after != nil {
+				arg.AfterCreatedAt, arg.AfterID = pgtype.Timestamptz{Time: after.CreatedAt, Valid: true}, &after.ID
+			}
+			return e.Store.PageNotes(ctx, arg)
+		},
+		func(n dbgen.Note) newest { return newest{n.CreatedAt.Time, n.ID} })
+}
+
+func (e ListEndpoint) Build(p app.Page[dbgen.Note]) app.Page[Note] {
+	return app.MapPage(p, func(r dbgen.Note) Note { return ToViewModel(r, e.Links) })
+}
+
+func (e ListEndpoint) Render(p app.Page[Note]) apigen.ListNotesResponseObject {
+	return apigen.ListNotes200JSONResponse{Notes: app.MapPage(p, toAPI).Items, Next: p.Next}
 }
 
 // -----------------------------------------------------------------------------

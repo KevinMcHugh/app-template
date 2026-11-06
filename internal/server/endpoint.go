@@ -68,12 +68,86 @@ func guard[Req any](ctx context.Context, e any, req Req) (context.Context, func(
 	}
 }
 
-// Run drives an Endpoint end to end, enforcing its Guard if it has one.
+// Paged is the extension a list endpoint implements: Page names the list
+// and reads the page the caller asked for (the limit and after query
+// parameters every list operation takes). The endpoint's model is that one
+// page, app.Page[Row], which its Interact gets from app.Paginate:
+//
+//	func (ListEndpoint) Page(req apigen.ListNotesRequestObject) app.PageRequest {
+//		return app.PageRequest{List: "note", Limit: req.Params.Limit, After: req.Params.After}
+//	}
+//
+// Run and BuildViewModel check what comes back: a page longer than the
+// caller asked for fails closed, since it means the endpoint ignored the
+// limit and a large list would come back whole.
+type Paged[Req any] interface {
+	Page(req Req) app.PageRequest
+}
+
+// PagedEndpoint is a list endpoint: a Paged Endpoint whose model is one
+// page of rows and whose view model is one page of views. Server's
+// handlers for the list operations run theirs through RunPaged, so a list
+// endpoint that does not page fails to compile.
+type PagedEndpoint[Req, Row, VM, Res any] interface {
+	Endpoint[Req, app.Page[Row], app.Page[VM], Res]
+	Paged[Req]
+}
+
+// RunPaged is Run for a list endpoint.
+func RunPaged[Req, Row, VM, Res any](ctx context.Context, e PagedEndpoint[Req, Row, VM, Res], req Req) (Res, error) {
+	return Run[Req, app.Page[Row], app.Page[VM], Res](ctx, e, req)
+}
+
+// checkPage refuses a page longer than e's request allows.
+func checkPage[Req any](e any, req Req, m any) error {
+	p, ok := e.(Paged[Req])
+	if !ok {
+		return nil
+	}
+	l, ok := m.(interface{ Len() int })
+	if !ok {
+		return fmt.Errorf("server: %T is Paged but its model %T is not a page", e, m)
+	}
+	size, err := p.Page(req).Size()
+	if err != nil {
+		return err
+	}
+	if l.Len() > size {
+		return fmt.Errorf("server: %T returned %d items for a page of %d", e, l.Len(), size)
+	}
+	return nil
+}
+
+// All is every item of a paged list, following next from page to page,
+// for a surface that needs the whole list at once (an MCP tool that
+// gathers several lists, say). req makes the request for the page that
+// starts at after. Prefer handing the caller a page and its next.
+func All[Req, Row, VM any](ctx context.Context, e Interactor[Req, app.Page[Row], app.Page[VM]], req func(after string) Req) ([]VM, error) {
+	var out []VM
+	after := ""
+	for {
+		page, err := BuildViewModel(ctx, e, req(after))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page.Items...)
+		if page.Next == "" {
+			return out, nil
+		}
+		after = page.Next
+	}
+}
+
+// Run drives an Endpoint end to end, enforcing its Guard if it has one,
+// and the length of its page if it is Paged.
 func Run[Req, M, VM, Res any](ctx context.Context, e Endpoint[Req, M, VM, Res], req Req) (Res, error) {
 	ctx, checked := guard(ctx, e, req)
 	m, err := e.Interact(ctx, req)
 	if err == nil {
 		err = checked()
+	}
+	if err == nil {
+		err = checkPage(e, req, m)
 	}
 	if err != nil {
 		var zero Res
@@ -96,12 +170,15 @@ func RunGuarded[Req, M, VM, Res any](ctx context.Context, e GuardedEndpoint[Req,
 }
 
 // BuildViewModel drives Interact then Build, stopping short of Render. It
-// enforces a Guard exactly as Run does.
+// enforces a Guard and a page's length exactly as Run does.
 func BuildViewModel[Req, M, VM any](ctx context.Context, e Interactor[Req, M, VM], req Req) (VM, error) {
 	ctx, checked := guard(ctx, e, req)
 	m, err := e.Interact(ctx, req)
 	if err == nil {
 		err = checked()
+	}
+	if err == nil {
+		err = checkPage(e, req, m)
 	}
 	if err != nil {
 		var zero VM

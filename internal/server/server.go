@@ -171,7 +171,11 @@ func (s *Server) GetMe(ctx context.Context, req apigen.GetMeRequestObject) (apig
 // -----------------------------------------------------------------------------
 
 func (s *Server) ListNotes(ctx context.Context, req apigen.ListNotesRequestObject) (apigen.ListNotesResponseObject, error) {
-	return Run(ctx, notes.ListEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := RunPaged(ctx, notes.ListEndpoint{Store: s.store, Links: s.links}, req)
+	if isUnprocessable(err) {
+		return apigen.ListNotes422JSONResponse{UnprocessableJSONResponse: unprocessable(err)}, nil
+	}
+	return resp, err
 }
 
 func (s *Server) GetNote(ctx context.Context, req apigen.GetNoteRequestObject) (apigen.GetNoteResponseObject, error) {

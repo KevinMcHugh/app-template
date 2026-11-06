@@ -26,7 +26,7 @@ import (
 // app is for and the usual order of tools; keep it short.
 const Instructions = `This server stores notes: a title and a free-text body.
 
-Use list_notes to see what exists and get_note for one in full. create_note, update_note and delete_note change them. update_note takes the updatedAt you last read, and refuses the change if someone saved the note since; read it again, and check the change still makes sense, before retrying. Confirm with the user before deleting anything.`
+Use list_notes to see what exists and get_note for one in full. list_notes returns a page at a time (100 unless you ask for up to 200) and a next cursor: to see more, call it again with after set to next, until next is empty. create_note, update_note and delete_note change them. update_note takes the updatedAt you last read, and refuses the change if someone saved the note since; read it again, and check the change still makes sense, before retrying. Confirm with the user before deleting anything.`
 
 // NewServer builds the MCP server with every tool registered.
 func NewServer(store server.Store, links app.Links) *mcpsdk.Server {
@@ -45,8 +45,17 @@ type MeOutput struct {
 	Me me.Me `json:"me"`
 }
 
+// ListNotesInput is a page of the notes. list_notes returns a page and a
+// next cursor: call it again with that as after for the next page, until
+// next is empty.
+type ListNotesInput struct {
+	Limit int    `json:"limit,omitempty" jsonschema:"how many to return, from 1 to 200; omit for 100"`
+	After string `json:"after,omitempty" jsonschema:"the next value from the page before; omit for the first page"`
+}
+
 type ListNotesOutput struct {
 	Notes []notes.Note `json:"notes"`
+	Next  string       `json:"next" jsonschema:"send as after for the next page; empty on the last page"`
 }
 
 type NoteIDInput struct {
@@ -86,10 +95,12 @@ func registerRead(s *mcpsdk.Server, store server.Store, links app.Links) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "list_notes",
-		Description: "List every note, newest first.",
-	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ Empty) (*mcpsdk.CallToolResult, ListNotesOutput, error) {
-		vm, err := server.BuildViewModel(ctx, notes.ListEndpoint{Store: store, Links: links}, apigen.ListNotesRequestObject{})
-		return nil, ListNotesOutput{Notes: vm}, err
+		Description: "List the notes, newest first, a page at a time.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in ListNotesInput) (*mcpsdk.CallToolResult, ListNotesOutput, error) {
+		vm, err := server.BuildViewModel(ctx, notes.ListEndpoint{Store: store, Links: links}, apigen.ListNotesRequestObject{
+			Params: apigen.ListNotesParams{Limit: in.Limit, After: in.After},
+		})
+		return nil, ListNotesOutput{Notes: vm.Items, Next: vm.Next}, err
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
