@@ -126,13 +126,16 @@ func TestEveryPatchIsGuarded(t *testing.T) {
 	}
 }
 
+// noStore is the store the fake endpoints below are handed; they use none.
+type noStore struct{}
+
 // guardedNoTx is a Guarded endpoint that never opens a transaction, so
 // nothing checks its guard.
 type guardedNoTx struct{}
 
-func (guardedNoTx) Interact(context.Context, string) (string, error) { return "wrote", nil }
-func (guardedNoTx) Build(m string) string                            { return m }
-func (guardedNoTx) Render(vm string) string                          { return vm }
+func (guardedNoTx) Interact(context.Context, noStore, string) (string, error) { return "wrote", nil }
+func (guardedNoTx) Build(m string) string                                     { return m }
+func (guardedNoTx) Render(vm string) string                                   { return vm }
 func (guardedNoTx) Guard(string) app.Guard {
 	return app.Guard{Kind: "note", ID: "n1", Seen: time.Now()}
 }
@@ -145,13 +148,13 @@ func (unguarded) Guard() {} // not Guarded: the signature does not match
 // surface, rather than writing with no comparison; others are untouched.
 func TestUncheckedGuardFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	if _, err := server.RunGuarded(ctx, guardedNoTx{}, "req"); err == nil {
+	if _, err := server.RunGuarded(ctx, noStore{}, guardedNoTx{}, "req"); err == nil {
 		t.Fatal("Run passed a guard nothing checked")
 	}
-	if _, err := server.BuildViewModel(ctx, guardedNoTx{}, "req"); err == nil {
+	if _, err := server.BuildViewModel(ctx, noStore{}, guardedNoTx{}, "req"); err == nil {
 		t.Fatal("BuildViewModel passed a guard nothing checked")
 	}
-	if got, err := server.Run(ctx, unguarded{}, "req"); err != nil || got != "wrote" {
+	if got, err := server.Run(ctx, noStore{}, unguarded{}, "req"); err != nil || got != "wrote" {
 		t.Fatalf("an unguarded endpoint: %q, %v", got, err)
 	}
 }
@@ -194,7 +197,7 @@ func TestEveryListIsPaged(t *testing.T) {
 // overlong is a Paged endpoint that ignores the limit it was asked for.
 type overlong struct{}
 
-func (overlong) Interact(context.Context, int) (app.Page[int], error) {
+func (overlong) Interact(context.Context, noStore, int) (app.Page[int], error) {
 	return app.Page[int]{Items: []int{1, 2, 3}}, nil
 }
 func (overlong) Build(p app.Page[int]) app.Page[int] { return p }
@@ -205,13 +208,13 @@ func (overlong) Page(limit int) app.PageRequest      { return app.PageRequest{Li
 // on every surface, rather than handing back a large list whole.
 func TestOverlongPageFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	if _, err := server.RunPaged(ctx, overlong{}, 2); err == nil {
+	if _, err := server.RunPaged(ctx, noStore{}, overlong{}, 2); err == nil {
 		t.Fatal("Run passed a page of 3 for a limit of 2")
 	}
-	if _, err := server.BuildViewModel(ctx, overlong{}, 2); err == nil {
+	if _, err := server.BuildViewModel(ctx, noStore{}, overlong{}, 2); err == nil {
 		t.Fatal("BuildViewModel passed a page of 3 for a limit of 2")
 	}
-	if n, err := server.RunPaged(ctx, overlong{}, 3); err != nil || n != 3 {
+	if n, err := server.RunPaged(ctx, noStore{}, overlong{}, 3); err != nil || n != 3 {
 		t.Fatalf("a page within its limit: %d, %v", n, err)
 	}
 }

@@ -97,7 +97,7 @@ func redirect(w http.ResponseWriter, r *http.Request, path, msg string, isErr bo
 func (s *Server) indexPage(w http.ResponseWriter, r *http.Request) {
 	// A page of notes; ?after= (from the Older notes link) is the next one.
 	after := r.URL.Query().Get("after")
-	page, err := server.BuildViewModel(r.Context(), notes.ListEndpoint{Store: s.Store, Links: s.Links}, apigen.ListNotesRequestObject{
+	page, err := server.BuildViewModel(r.Context(), notes.ListStore(s.Store), notes.ListEndpoint{Links: s.Links}, apigen.ListNotesRequestObject{
 		Params: apigen.ListNotesParams{After: after},
 	})
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Server) indexPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) notePage(w http.ResponseWriter, r *http.Request) {
-	n, err := server.BuildViewModel(r.Context(), notes.GetEndpoint{Store: s.Store, Links: s.Links}, apigen.GetNoteRequestObject{NoteId: chi.URLParam(r, "id")})
+	n, err := server.BuildViewModel(r.Context(), notes.GetStore(s.Store), notes.GetEndpoint{Links: s.Links}, apigen.GetNoteRequestObject{NoteId: chi.URLParam(r, "id")})
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -117,7 +117,7 @@ func (s *Server) notePage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
-	n, err := server.BuildViewModel(r.Context(), notes.CreateEndpoint{Store: s.Store, Links: s.Links}, apigen.CreateNoteRequestObject{
+	n, err := server.BuildViewModel(r.Context(), notes.CreateStore(s.Store), notes.CreateEndpoint{Links: s.Links}, apigen.CreateNoteRequestObject{
 		Body: &apigen.NoteCreate{Title: r.FormValue("title"), Body: r.FormValue("body")},
 	})
 	if errors.Is(err, app.ErrBadInput) {
@@ -137,7 +137,7 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	// A missing or malformed updated_at leaves seen zero, which the guard
 	// refuses as bad input.
 	seen, _ := time.Parse(time.RFC3339Nano, r.FormValue("updated_at"))
-	_, err := server.BuildViewModel(r.Context(), notes.UpdateEndpoint{Store: s.Store, Links: s.Links}, apigen.UpdateNoteRequestObject{
+	_, err := server.BuildViewModel(r.Context(), notes.UpdateStore(s.Store), notes.UpdateEndpoint{Links: s.Links}, apigen.UpdateNoteRequestObject{
 		NoteId: id,
 		Body:   &apigen.NoteUpdate{Title: &title, Body: &body, UpdatedAt: seen},
 	})
@@ -153,7 +153,7 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
-	if _, err := server.BuildViewModel(r.Context(), notes.DeleteEndpoint{Store: s.Store}, apigen.DeleteNoteRequestObject{NoteId: chi.URLParam(r, "id")}); err != nil {
+	if _, err := server.BuildViewModel(r.Context(), notes.DeleteStore(s.Store), notes.DeleteEndpoint{}, apigen.DeleteNoteRequestObject{NoteId: chi.URLParam(r, "id")}); err != nil {
 		s.fail(w, r, err)
 		return
 	}

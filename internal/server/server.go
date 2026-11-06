@@ -163,7 +163,7 @@ func bodyRequired() apigen.BadRequestJSONResponse {
 // -----------------------------------------------------------------------------
 
 func (s *Server) GetMe(ctx context.Context, req apigen.GetMeRequestObject) (apigen.GetMeResponseObject, error) {
-	return Run(ctx, me.Endpoint{Store: s.store}, req)
+	return Run(ctx, me.Store(s.store), me.Endpoint{}, req)
 }
 
 // -----------------------------------------------------------------------------
@@ -171,7 +171,7 @@ func (s *Server) GetMe(ctx context.Context, req apigen.GetMeRequestObject) (apig
 // -----------------------------------------------------------------------------
 
 func (s *Server) ListNotes(ctx context.Context, req apigen.ListNotesRequestObject) (apigen.ListNotesResponseObject, error) {
-	resp, err := RunPaged(ctx, notes.ListEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := RunPaged(ctx, notes.ListStore(s.store), notes.ListEndpoint{Links: s.links}, req)
 	if isUnprocessable(err) {
 		return apigen.ListNotes422JSONResponse{UnprocessableJSONResponse: unprocessable(err)}, nil
 	}
@@ -179,7 +179,7 @@ func (s *Server) ListNotes(ctx context.Context, req apigen.ListNotesRequestObjec
 }
 
 func (s *Server) GetNote(ctx context.Context, req apigen.GetNoteRequestObject) (apigen.GetNoteResponseObject, error) {
-	resp, err := Run(ctx, notes.GetEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := Run(ctx, notes.GetStore(s.store), notes.GetEndpoint{Links: s.links}, req)
 	if isNotFound(err) {
 		return apigen.GetNote404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil
 	}
@@ -190,7 +190,7 @@ func (s *Server) CreateNote(ctx context.Context, req apigen.CreateNoteRequestObj
 	if req.Body == nil {
 		return apigen.CreateNote400JSONResponse{BadRequestJSONResponse: bodyRequired()}, nil
 	}
-	resp, err := Run(ctx, notes.CreateEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := Run(ctx, notes.CreateStore(s.store), notes.CreateEndpoint{Links: s.links}, req)
 	if isUnprocessable(err) {
 		return apigen.CreateNote422JSONResponse{UnprocessableJSONResponse: unprocessable(err)}, nil
 	}
@@ -201,7 +201,7 @@ func (s *Server) UpdateNote(ctx context.Context, req apigen.UpdateNoteRequestObj
 	if req.Body == nil {
 		return apigen.UpdateNote400JSONResponse{BadRequestJSONResponse: bodyRequired()}, nil
 	}
-	resp, err := RunGuarded(ctx, notes.UpdateEndpoint{Store: s.store, Links: s.links}, req)
+	resp, err := RunGuarded(ctx, notes.UpdateStore(s.store), notes.UpdateEndpoint{Links: s.links}, req)
 	switch {
 	case isNotFound(err):
 		return apigen.UpdateNote404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil
@@ -214,7 +214,7 @@ func (s *Server) UpdateNote(ctx context.Context, req apigen.UpdateNoteRequestObj
 }
 
 func (s *Server) DeleteNote(ctx context.Context, req apigen.DeleteNoteRequestObject) (apigen.DeleteNoteResponseObject, error) {
-	resp, err := Run(ctx, notes.DeleteEndpoint{Store: s.store}, req)
+	resp, err := Run(ctx, notes.DeleteStore(s.store), notes.DeleteEndpoint{}, req)
 	if isNotFound(err) {
 		return apigen.DeleteNote404JSONResponse{NotFoundJSONResponse: notFound(err)}, nil
 	}
