@@ -29,7 +29,7 @@ var googleAccounts = map[string]map[string]any{
 func fakeGoogle(t *testing.T) web.GoogleConfig {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
-		if r.FormValue("client_secret") != "secret" || googleAccounts[r.FormValue("code")] == nil {
+		if id, secret, _ := r.BasicAuth(); id != "client" || secret != "secret" || googleAccounts[r.FormValue("code")] == nil {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 			return
 		}

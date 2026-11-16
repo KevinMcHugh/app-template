@@ -38,7 +38,7 @@ Pasted on the authorize page, an invite connects a client. Redeemed by signing i
 
 ## Signing in with Google
 
-When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set ([configuration.md](configuration.md)), the sign-in page and the OAuth authorize page offer "Sign in with Google", after the inventory app's `internal/idp`. Google's answer is matched to a user by its (provider, subject) pair in `user_identities`:
+When `GOOGLE_CLIENT_ID` is set, with `GOOGLE_TOKEN_URL` pointing at the Sprites connector that holds the client secret (or, in local development, `GOOGLE_CLIENT_SECRET` itself; [configuration.md](configuration.md)), the sign-in page and the OAuth authorize page offer "Sign in with Google", after the inventory app's `internal/idp`. Google's answer is matched to a user by its (provider, subject) pair in `user_identities`:
 
 - **Known**: that user is signed in.
 - **Unknown, with an invite**: a new user is made, named as Google names them, and the invite is spent.

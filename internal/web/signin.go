@@ -32,14 +32,19 @@ import (
 // is exactly a session from pasting a key on /login, and created_by records
 // it as it records anyone.
 
-// GoogleConfig turns Google sign-in on when both ClientID and ClientSecret
-// are set. The endpoints default to Google's; tests point them at a fake.
+// GoogleConfig turns Google sign-in on when ClientID is set and the app can
+// reach a token endpoint that authenticates it: either it holds ClientSecret
+// itself, or TokenURL is a Sprites connector that adds the secret on the way
+// to Google (docs/configuration.md). The endpoints default to Google's; tests
+// point them at a fake.
 type GoogleConfig struct {
 	ClientID, ClientSecret         string
 	AuthURL, TokenURL, UserInfoURL string
 }
 
-func (g GoogleConfig) enabled() bool { return g.ClientID != "" && g.ClientSecret != "" }
+func (g GoogleConfig) enabled() bool {
+	return g.ClientID != "" && (g.ClientSecret != "" || g.TokenURL != "")
+}
 
 func (g GoogleConfig) withDefaults() GoogleConfig {
 	if g.AuthURL == "" {
@@ -285,12 +290,17 @@ func (s *Server) googleExchange(ctx context.Context, code string) (googleUser, e
 	g := s.Google.withDefaults()
 	client := &http.Client{Timeout: 10 * time.Second}
 	form := url.Values{
-		"code": {code}, "client_id": {g.ClientID}, "client_secret": {g.ClientSecret},
-		"redirect_uri": {s.Issuer + "/auth/google/callback"}, "grant_type": {"authorization_code"},
+		"code": {code}, "redirect_uri": {s.Issuer + "/auth/google/callback"}, "grant_type": {"authorization_code"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return googleUser{}, err
+	}
+	// The client authenticates with HTTP Basic, which is also how a Sprites
+	// connector sends the secret it holds. With no secret here, TokenURL is
+	// that connector, and the request leaves with no credential at all.
+	if g.ClientSecret != "" {
+		req.SetBasicAuth(url.QueryEscape(g.ClientID), url.QueryEscape(g.ClientSecret))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")

@@ -83,8 +83,13 @@ func serve() error {
 		issuer = "http://localhost:" + port
 	}
 	srv := web.New(app.NewStore(pool), issuer)
-	// Google sign-in is on when both are set (docs/configuration.md).
-	srv.Google = web.GoogleConfig{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")}
+	// Google sign-in is on with a client id and either a token connector or,
+	// off the sprite, the secret itself (docs/configuration.md).
+	srv.Google = web.GoogleConfig{
+		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		TokenURL:     os.Getenv("GOOGLE_TOKEN_URL"),
+	}
 	slog.Info("listening", "port", port, "public_url", issuer)
 	hs := &http.Server{Addr: ":" + port, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	return hs.ListenAndServe()

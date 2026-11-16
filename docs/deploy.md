@@ -32,7 +32,9 @@ sprite exec -- bash -lc "cd ~/$APP && DATABASE_URL='$DSN' dbmate --migrations-di
 sprite exec -- bash -lc "DATABASE_URL='$DSN' ~/$APP/bin/server keys create --name you"   # SAVE THE KEY
 
 # PUBLIC_URL must be the https URL, because OAuth discovery advertises it.
-# Add any secrets the app needs to the same --env list.
+# Secrets do not go here: put each in a Sprites connector with
+# deploy/connector.sh, run on your own machine, and add the token URL it
+# prints (for Google sign-in: GOOGLE_CLIENT_ID and GOOGLE_TOKEN_URL).
 sprite exec -- bash -lc "/.sprite/bin/sprite-env services create $APP \
   --cmd /home/sprite/$APP/bin/server --args serve --dir /home/sprite/$APP \
   --needs postgres --http-port 8080 \
@@ -45,7 +47,7 @@ The sprite needs the Go version in `go.mod`. `go build` fetches that toolchain i
 
 For someone else, mint an invite they paste when connecting Claude: `sprite exec -s myapp -- bash -lc "DATABASE_URL='postgres:///myapp?host=/var/run/postgresql&sslmode=disable' ~/myapp/bin/server invites create --note ana --expires-in 168h"`.
 
-**Config and secrets** live only in the service's `--env`. Changing one means recreating the service with every variable; [configuration.md](configuration.md) has the command and the reasons.
+**Config** lives only in the service's `--env`, and **secrets** in Sprites connectors. Changing a value means recreating the service with every variable; [configuration.md](configuration.md) has the command, the connector script and the reasons.
 
 ## Deploying through the Fly.io MCP connector
 
