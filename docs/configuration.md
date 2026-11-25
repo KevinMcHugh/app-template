@@ -17,7 +17,7 @@ An app made from the template adds a row for each provider it calls the same way
 Create or rotate one on your own machine:
 
 ```sh
-SPRITES_TOKEN=… deploy/connector.sh <app>-google https://oauth2.googleapis.com /token <app>
+SPRITES_TOKEN=… deploy/connector.sh <app>-google https://oauth2.googleapis.com/token <app>
 ```
 
 It asks for the client id and secret without echoing them and sends them to the Sprites API on stdin, then prints the token URL to put on the service's environment. Running it again with the same name replaces the secret in place. The access policy it sets lets only sprites whose name starts with `<app>` use the connector, and only for that one path, so even code on the sprite that goes wrong can do nothing with it but mint tokens the app could mint anyway. (A name prefix also matches `<app>-staging`; give the sprites distinct prefixes if that matters.) `SPRITES_TOKEN` is the token from [sprites.dev/account](https://sprites.dev/account), the same kind CI deploys with.
