@@ -2,14 +2,17 @@
 # Store an OAuth client's id and secret in a Sprites connector, so the app's
 # sprite can reach the provider's token endpoint without holding the secret.
 #
-#   SPRITES_TOKEN=… deploy/connector.sh NAME BASE_URL TOKEN_PATH SPRITE
+#   SPRITES_TOKEN=… deploy/connector.sh NAME TOKEN_URL SPRITE
 #
 #   NAME        the connector's name in the org, e.g. myapp-google; running
 #               again with the same name replaces its secret (rotation)
-#   BASE_URL    the provider's origin, e.g. https://oauth2.googleapis.com
-#   TOKEN_PATH  the one path the connector will forward, e.g. /token
+#   TOKEN_URL   the provider's token endpoint, e.g.
+#               https://oauth2.googleapis.com/token; the connector's base is
+#               its origin, and it forwards only its path
 #   SPRITE      the sprite allowed to use it (a name prefix, so pass the
 #               whole name)
+#
+# NAME BASE_URL TOKEN_PATH SPRITE, with the origin and path apart, works too.
 #
 # Run it on your own machine, never on the sprite and never through Claude:
 # it asks for the id and secret without echoing them, and sends them to the
@@ -22,13 +25,18 @@
 # TOKEN_PATH. SPRITES_TOKEN needs full access to create connectors.
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  sed -n '5,13p' "$0" >&2
-  exit 2
-fi
-name=$1 base=${2%/} path=$3 sprite=$4
+case $# in
+  3) name=$1 sprite=$3
+     [[ $2 =~ ^(https://[^/]+)(/.+)$ ]] || { echo "TOKEN_URL must be https://host/path, got $2" >&2; exit 2; }
+     base=${BASH_REMATCH[1]} path=${BASH_REMATCH[2]} ;;
+  4) name=$1 base=${2%/} path=$3 sprite=$4 ;;
+  *) echo "expected 3 arguments (or 4), got $#" >&2
+     sed -n '5,16p' "$0" >&2
+     exit 2 ;;
+esac
 : "${SPRITES_TOKEN:?set SPRITES_TOKEN to a Sprites API token with full access}"
 [[ $base == https://* ]] || { echo "BASE_URL must be https" >&2; exit 2; }
+[[ $base =~ ^https://[^/]+$ ]] || { echo "BASE_URL must be an origin, with no path: $base" >&2; exit 2; }
 [[ $path == /* ]] || { echo "TOKEN_PATH must start with /" >&2; exit 2; }
 [[ $name =~ ^[A-Za-z0-9_-]+$ && $sprite =~ ^[A-Za-z0-9_-]+$ ]] || { echo "NAME and SPRITE: letters, digits, - and _ only" >&2; exit 2; }
 
@@ -49,10 +57,13 @@ resp=$(printf '{"name":"%s","description":"OAuth client credentials for %s","bas
     -H "Authorization: Bearer $SPRITES_TOKEN" -H "Content-Type: application/json" --data-binary @-)
 unset basic
 
-conn=$(printf '%s' "$resp" | grep -o '"id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-if [[ -z $conn ]]; then
+# The connector's id, from {"connection":{"id":"…",…}}. A bash match, not
+# grep and sed, which differ between macOS and Linux.
+re='"id"[[:space:]]*:[[:space:]]*"([^"]+)"'
+if ! [[ $resp =~ $re ]]; then
   echo "unexpected response: $resp" >&2
   exit 1
 fi
+conn=${BASH_REMATCH[1]}
 echo "connector $conn: $name, for sprite $sprite, forwarding only $path"
 echo "token URL: https://api.sprites.dev/v1/gateway/custom_api/$conn$path"
